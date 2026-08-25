@@ -71,6 +71,9 @@ Every script reads or writes one of these; if they drift, benchmarking cannot jo
 ### Future Work (not attempted here)
 Extending the same benchmark framework to fusion chimeras (reads joining two different loci, including near-identical viral strains), which need different detectors than the self-complementarity signal used for foldbacks.
 
+<img width="4496" height="6090" alt="Untitled diagram-2026-08-25-205417" src="https://github.com/user-attachments/assets/a3844816-33d3-46aa-a149-a767f637c159" />
+
+
 ## References
 * Marijon, Pierre, Rayan Chikhi, and Jean-Stéphane Varré. 2020. “Yacrd and Fpa: Upstream Tools for Long-Read Genome Assembly.” *Bioinformatics* (Oxford, England) 36 (12): 3894–3896.
 * Smolka, Moritz, Luis F. Paulin, Christopher M. Grochowski, et al. 2024. “Detection of Mosaic and Population-Level Structural Variants with Sniffles2.” *Nature Biotechnology* 42 (10): 1571–1580.
