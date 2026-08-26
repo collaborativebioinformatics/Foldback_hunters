@@ -10,7 +10,7 @@ One row per simulated read. Written by the simulator (Task A) only. Read by ever
 |---|---|---|
 | `read_id` | string | The read's name in the FASTQ. Must match the `@` line exactly (no leading `@`, no trailing whitespace). |
 | `is_foldback` | boolean | `True` if we spiked this read as a foldback, `False` for clean control reads. |
-| `fold_position` | string | Where along the read the fold sits: `middle`, `quarter`, or `near_end`. Empty for clean reads (`is_foldback=False`). |
+| `fold_position` | string | Where along the read the fold sits: `middle`, `off_center`, or `near_end`. Empty for clean reads (`is_foldback=False`). |
 | `adapter_present` | boolean | `True` if we embedded an ONT adapter sequence at the fold junction, `False` otherwise. Empty for clean reads. |
 | `source_locus` | string | Genomic region the read was simulated from, e.g. `chr6:12345678-12360000`. |
 
