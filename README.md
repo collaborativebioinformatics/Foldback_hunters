@@ -2,7 +2,7 @@
 
 
 # Foldback Hunters
-# Detecting Foldback Reads in Long-Read Sequencing
+### Detecting Foldback Reads in Long-Read Sequencing
 
 ## Background
 A **foldback read** is a single sequencing read whose second half is the reverse complement of its first half. In Oxford Nanopore sequencing, this arises when:
