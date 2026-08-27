@@ -1,4 +1,5 @@
-<img width="1704" height="1094" alt="Screenshot 2026-08-26 at 17 13 47" src="https://github.com/user-attachments/assets/228b5502-cb82-4cd3-9adf-b100862ffa3f" />
+<img width="1563" height="1006" alt="ChatGPT Image Aug 27, 2026, 09_46_30 AM" src="https://github.com/user-attachments/assets/ae6fefbe-5004-42e4-a924-5191878e2e01" />
+
 
 
 # Foldback Hunters
