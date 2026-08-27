@@ -1,0 +1,11 @@
+name: foldback-detector
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - python=3.10
+  - parasail-python
+  - pytest
+  - pip
+  - pip:
+      - edlib
