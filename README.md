@@ -76,7 +76,8 @@ Every script reads or writes one of these; if they drift, benchmarking cannot jo
 ### Future Work (not attempted here)
 Extending the same benchmark framework to fusion chimeras (reads joining two different loci, including near-identical viral strains), which need different detectors than the self-complementarity signal used for foldbacks.
 
-<img width="4316" height="5195" alt="HG002 Assembly Validation-2026-08-27-133849" src="https://github.com/user-attachments/assets/e9bf590f-4181-4e15-971e-f5f76778a313" />
+<img width="4316" height="5195" alt="HG002 Assembly Validation-2026-08-27-135026" src="https://github.com/user-attachments/assets/682232bf-660f-491d-9f04-13af7830cf2f" />
+
 
 
 ## Results
