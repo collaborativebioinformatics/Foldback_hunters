@@ -1,3 +1,7 @@
+<img width="1704" height="1094" alt="Screenshot 2026-08-26 at 17 13 47" src="https://github.com/user-attachments/assets/228b5502-cb82-4cd3-9adf-b100862ffa3f" />
+
+
+# Foldback Hunters
 # Detecting Foldback Reads in Long-Read Sequencing
 
 ## Background
@@ -71,7 +75,12 @@ Every script reads or writes one of these; if they drift, benchmarking cannot jo
 ### Future Work (not attempted here)
 Extending the same benchmark framework to fusion chimeras (reads joining two different loci, including near-identical viral strains), which need different detectors than the self-complementarity signal used for foldbacks.
 
-<img width="4496" height="6090" alt="Untitled diagram-2026-08-25-205417" src="https://github.com/user-attachments/assets/a3844816-33d3-46aa-a149-a767f637c159" />
+<img width="4316" height="5195" alt="HG002 Assembly Validation-2026-08-27-133849" src="https://github.com/user-attachments/assets/e9bf590f-4181-4e15-971e-f5f76778a313" />
+
+
+## Results
+
+<img width="1334" height="2032" alt="framing_a" src="https://github.com/user-attachments/assets/047e1d0f-431f-4f93-bca9-c34d0147065e" />
 
 
 ## References
