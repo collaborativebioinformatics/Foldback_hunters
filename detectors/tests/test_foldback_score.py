@@ -9,7 +9,13 @@ of sim/simulate_foldbacks_v2.py.
 import random
 
 import pytest
-from foldback_score import ScoreResult, revcomp, score_read_full, score_read_probe
+from foldback_score import (
+    ScoreResult,
+    revcomp,
+    score_read_full,
+    score_read_probe,
+    score_read_seed,
+)
 
 DEFAULT_PROBE_LENGTHS = (50, 150, 500, 1500)
 
@@ -79,6 +85,48 @@ def test_too_short_full():
     seq = "ACGT" * 125  # 500bp < default min_len 1000
     result = score_read_full("short2", seq)
     assert result == ScoreResult("short2", None, None, "too_short")
+
+
+# ---------------------------------------------------------------------------
+# seed mode: position inference and negative case
+# ---------------------------------------------------------------------------
+
+def test_seed_position_off_center():
+    # t=1250, off the stride-k grid: (p - t) mod k != 0.
+    read, _t = make_foldback_read(5000, 3750, seed=1)
+    result = score_read_seed("s1", read, min_len=1000)
+    assert result.status == "ok"
+    assert abs(result.fold_position_bp - 3750) <= 5
+
+
+def test_seed_no_match_unrelated_sequence():
+    rng_a = random.Random(100)
+    rng_b = random.Random(200)
+    a = "".join(rng_a.choice("ACGT") for _ in range(2000))
+    b = "".join(rng_b.choice("ACGT") for _ in range(2000))
+    read = a + b  # no self-complementarity: two unrelated random halves
+    result = score_read_seed("s2", read, min_len=1000)
+    assert result.status == "no_match" or (result.raw_score or 0.0) < 0.5
+
+
+@pytest.mark.xfail(
+    reason="Real finding: for small t (near_end reads), the fixed +/-500bp "
+           "verify window includes far more flanking background than the "
+           "true arm, which corrupts edlib's HW location refinement.",
+    strict=True,
+)
+def test_seed_position_near_end():
+    read, t = make_foldback_read(5000, 4850, seed=1)
+    assert t == 150
+    result = score_read_seed("s3", read, min_len=1000)
+    assert result.status == "ok"
+    assert result.fold_position_bp == 4850
+
+
+def test_too_short_seed():
+    seq = "ACGT" * 125  # 500bp < default min_len 1000
+    result = score_read_seed("short3", seq)
+    assert result == ScoreResult("short3", None, None, "too_short")
 
 
 # ---------------------------------------------------------------------------

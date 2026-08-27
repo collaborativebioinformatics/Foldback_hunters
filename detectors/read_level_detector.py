@@ -4,7 +4,7 @@ CLI for reference-free foldback read-level detection (Task C).
 
     python detectors/read_level_detector.py --fastq <sim_X.fastq> \
         --condition <label> --outdir results/ \
-        [--processes N] [--mode probe|full --max-reads N]
+        [--processes N] [--mode probe|full|seed --max-reads N]
 
 Writes calls_read_level_detector_<condition>.tsv (read_id, method, flagged)
 and scores_read_level_detector_<condition>.tsv (read_id, raw_score,
@@ -71,7 +71,7 @@ def main():
     ap.add_argument("--outdir", default="results")
     ap.add_argument("--processes", type=int, default=None,
                      help="If set, score reads in parallel with this many workers.")
-    ap.add_argument("--mode", choices=["probe", "full"], default="probe")
+    ap.add_argument("--mode", choices=["probe", "full", "seed"], default="probe")
     ap.add_argument("--max-reads", type=int, default=None,
                      help="Cap the number of reads scored. Required when --mode full.")
     args = ap.parse_args()
