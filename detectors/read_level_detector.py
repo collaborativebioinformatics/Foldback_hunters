@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-CLI for reference-free foldback read-level detection (Task C).
+CLI for reference-free foldback read-level detection
 
-    python detectors/read_level_detector.py --fastq <sim_X.fastq> \
-        --condition <label> --outdir results/ \
+    python detectors/read_level_detector.py --fastq <input.fastq> \
+        --outdir results/ \
         [--processes N] [--mode probe|full|seed --max-reads N]
 
-Writes calls_read_level_detector_<condition>.tsv (read_id, method, flagged)
-and scores_read_level_detector_<condition>.tsv (read_id, raw_score,
+Writes calls_read_level_detector_<stem>.tsv (read_id, method, flagged)
+and scores_read_level_detector_<stem>.tsv (read_id, raw_score,
 fold_position_bp, status). flagged is the raw float score, not a threshold.
+<stem> is the fastq filename stem (e.g. foo.fastq.gz -> foo).
 """
 
 import argparse
@@ -16,12 +17,9 @@ import csv
 import gzip
 import itertools
 import os
-import re
 from multiprocessing import Pool
 
 from foldback_score import score_read
-
-CONDITION_RE = re.compile(r"^sim_(.+)\.fastq(\.gz)?$")
 
 
 def open_maybe_gz(path, mode="rt"):
@@ -44,15 +42,12 @@ def iter_fastq(path):
             yield read_id, seq.upper()
 
 
-def parse_condition(fastq_path):
+def parse_stem(fastq_path):
     basename = os.path.basename(fastq_path)
-    m = CONDITION_RE.match(basename)
-    if not m:
-        raise SystemExit(
-            f"Could not parse condition from filename {basename!r}; "
-            "expected sim_<condition>.fastq[.gz]. Pass --condition explicitly."
-        )
-    return m.group(1)
+    if basename.endswith(".gz"):
+        basename = basename[: -len(".gz")]
+    stem, _ext = os.path.splitext(basename)
+    return stem
 
 
 def _score_worker(task):
@@ -65,9 +60,6 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--fastq", required=True, help="Input FASTQ (plain or .gz).")
-    ap.add_argument("--condition", default=None,
-                     help="Condition label for output filenames. If omitted, "
-                          "parsed from the fastq basename (sim_<condition>.fastq).")
     ap.add_argument("--outdir", default="results")
     ap.add_argument("--processes", type=int, default=None,
                      help="If set, score reads in parallel with this many workers.")
@@ -79,7 +71,7 @@ def main():
     if args.mode == "full" and args.max_reads is None:
         raise SystemExit("--mode full requires --max-reads: no cap = no run.")
 
-    condition = args.condition or parse_condition(args.fastq)
+    stem = parse_stem(args.fastq)
     os.makedirs(args.outdir, exist_ok=True)
 
     reads = iter_fastq(args.fastq)
@@ -94,8 +86,8 @@ def main():
     else:
         results = [_score_worker(t) for t in tasks]
 
-    calls_path = os.path.join(args.outdir, f"calls_read_level_detector_{condition}.tsv")
-    scores_path = os.path.join(args.outdir, f"scores_read_level_detector_{condition}.tsv")
+    calls_path = os.path.join(args.outdir, f"calls_read_level_detector_{stem}.tsv")
+    scores_path = os.path.join(args.outdir, f"scores_read_level_detector_{stem}.tsv")
 
     with open(calls_path, "w", newline="") as calls_fh, \
          open(scores_path, "w", newline="") as scores_fh:
