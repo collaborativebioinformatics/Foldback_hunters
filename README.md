@@ -80,6 +80,10 @@ Extending the same benchmark framework to fusion chimeras (reads joining two dif
 
 
 
+## Methods
+
+![Benchmark pipeline, foldback simulation (Task A), and the read-level detector in probe mode (Task C)](methods.png)
+
 ## Usage
 
 ### Environment
