@@ -8,17 +8,8 @@
 Presentation: https://docs.google.com/presentation/d/1WeAZOY6bWZYZP9_VU5Mh9rwYj5OVDrnPBxRT1ltQKd4/edit?slide=id.g3f89997e881_0_139#slide=id.g3f89997e881_0_139
 
 ## Background
-A **foldback read** is a single sequencing read whose second half is the reverse complement of its first half. In Oxford Nanopore sequencing, this arises when:
-* A single-stranded molecule folds back on itself during library preparation.
-* The template and complement strands pass through the pore together, so one physical read contains a sequence followed immediately by its own reverse complement.
-
-When such a read is aligned to a reference, the first half maps forward to a locus and the second half maps to the same locus in the opposite orientation, directly adjacent. A structural variant caller sees this pattern and calls a small inversion that is not real. 
-
-These artifacts are a known problem. The Sniffles2 paper (Smolka et al. 2024) notes that chimeras can form spurious inversions and, to avoid them, applies a blunt filter that removes all low-frequency inversions under 1 kb. That filter works by discarding a whole size class of calls, which means it also discards any real inversion under 1 kb. 
-
-Foldback reads that are not split by the basecaller remain an open issue in current tooling. A request to handle them in the ONT basecaller Dorado is open and unresolved.
-
-A collaborator has observed this artifact affecting on the order of a few percent of reads (roughly 5 percent by recollection). One of the first things this project does is replace that remembered figure with a measured rate on real data.
+A foldback read is a single sequencing read whose second half is the reverse complement of its first half. This arises in Oxford Nanopore sequencing when a single-stranded molecule folds back on itself during library preparation, or when template and complement strands pass through the pore together without being split by the basecaller. When aligned to a reference, such a read produces a supplementary alignment to the same locus in opposite orientation at adjacent coordinates, which structural variant callers can interpret as a small inversion that is not real.
+This artifact is documented in recent literature. Heinz, Meyerson, and Li (2025) [1] released Breakinator, an alignment-based detector that flags reads with the supplementary-in-opposite-orientation signature within 200 bp of the alignment end and a 10 percent margin around the read midpoint, and benchmarked it across ONT and PacBio chemistries. SAVANA [2] already includes a foldback-preprocessing step in its somatic SV pipeline and reports rates of 1 to 4 percent of gDNA reads across tumor regions and patients, reaching 20 to 30 percent in some cases. Severus [3] and Sniffles2 [4] address the downstream consequences differently: Sniffles2 filters all low-frequency inversions under 1 kb, which removes the artifacts but also discards any real inversion in that size class. On the vendor side, an open GitHub issue on Dorado documents that the basecaller does not split sequence-only foldbacks (those without a clean internal adapter), so they pass unchanged into downstream analysis.
 
 
 
