@@ -80,6 +80,60 @@ Extending the same benchmark framework to fusion chimeras (reads joining two dif
 
 
 
+## Usage
+
+### Environment
+
+Conda (recommended):
+```bash
+conda env create -f environment.yml
+conda activate foldback-detector
+```
+
+(Or alternatively) Pip only:
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### Quickstart
+
+Run the read-level detector on a FASTQ:
+```bash
+python detectors/read_level_detector.py --fastq sim/sim_middle.fastq --outdir results/
+```
+
+This writes two TSVs to `results/` (see [schema.md](schema.md)):
+* `calls_read_level_detector_<stem>.tsv` — `read_id, method, flagged`
+* `scores_read_level_detector_<stem>.tsv` — `read_id, raw_score, fold_position_bp, status`
+
+`<stem>` is the fastq filename stem, e.g. `foo.fastq.gz` -> `foo`.
+
+### Options
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--fastq` | *(required)* | Input FASTQ, plain or `.gz`. |
+| `--outdir` | `results` | Output directory (created if missing). |
+| `--mode` | `probe` | Scoring mode: `probe` (fast edlib infix search), `full` (parasail Smith-Waterman, slow — needs `--max-reads`), or `seed` (k-mer seed + bounded edlib, good middle ground). |
+| `--processes` | `None` | Number of worker processes for parallel scoring. |
+| `--max-reads` | `None` | Cap reads scored; required when `--mode full`. |
+
+### Example
+
+```bash
+python detectors/read_level_detector.py \
+  --fastq data/sim_near_end.fastq.gz \
+  --mode seed --processes 8 \
+  --outdir results/
+```
+```
+[read_level_detector] 50000 reads scored, mode=seed
+[read_level_detector] wrote results/calls_read_level_detector_near_end.tsv
+[read_level_detector] wrote results/scores_read_level_detector_near_end.tsv
+```
+
 ## Results
 
 <img width="1334" height="2032" alt="framing_a" src="https://github.com/user-attachments/assets/047e1d0f-431f-4f93-bca9-c34d0147065e" />
