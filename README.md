@@ -5,6 +5,8 @@
 # Foldback Hunters
 ### Detecting Foldback Reads in Long-Read Sequencing
 
+Presentation: https://docs.google.com/presentation/d/1WeAZOY6bWZYZP9_VU5Mh9rwYj5OVDrnPBxRT1ltQKd4/edit?slide=id.g3f89997e881_0_139#slide=id.g3f89997e881_0_139
+
 ## Background
 A **foldback read** is a single sequencing read whose second half is the reverse complement of its first half. In Oxford Nanopore sequencing, this arises when:
 * A single-stranded molecule folds back on itself during library preparation.
@@ -17,6 +19,66 @@ These artifacts are a known problem. The Sniffles2 paper (Smolka et al. 2024) no
 Foldback reads that are not split by the basecaller remain an open issue in current tooling. A request to handle them in the ONT basecaller Dorado is open and unresolved.
 
 A collaborator has observed this artifact affecting on the order of a few percent of reads (roughly 5 percent by recollection). One of the first things this project does is replace that remembered figure with a measured rate on real data.
+
+
+
+
+
+## Usage
+
+### Environment
+
+Conda (recommended):
+```bash
+conda env create -f environment.yml
+conda activate foldback-detector
+```
+
+(Or alternatively) Pip only:
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### Quickstart
+
+Run the read-level detector on a FASTQ:
+```bash
+python detectors/read_level_detector.py --fastq sim/sim_middle.fastq --outdir results/
+```
+
+This writes two TSVs to `results/` (see [schema.md](schema.md)):
+* `calls_foldback_hunter_<stem>.tsv` — `read_id, method, flagged`
+* `scores_foldback_hunter_<stem>.tsv` — `read_id, raw_score, fold_position_bp, status`
+
+`<stem>` is the fastq filename stem, e.g. `foo.fastq.gz` -> `foo`.
+
+### Options
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--fastq` | *(required)* | Input FASTQ, plain or `.gz`. |
+| `--outdir` | `results` | Output directory (created if missing). |
+| `--mode` | `probe` | Scoring mode: `probe` (fast edlib infix search), `full` (parasail Smith-Waterman, slow — needs `--max-reads`), or `seed` (k-mer seed + bounded edlib, good middle ground). |
+| `--processes` | `None` | Number of worker processes for parallel scoring. |
+| `--max-reads` | `None` | Cap reads scored; required when `--mode full`. |
+
+### Example
+
+```bash
+python detectors/read_level_detector.py \
+  --fastq data/sim_near_end.fastq.gz \
+  --mode seed --processes 8 \
+  --outdir results/
+```
+```
+[foldback_hunter] 50000 reads scored, mode=seed
+[foldback_hunter] wrote results/calls_foldback_hunter_near_end.tsv
+[foldback_hunter] wrote results/scores_foldback_hunter_near_end.tsv
+```
+
+
 
 ## Two Ways to Detect a Foldback
 The same foldback can be detected from two different inputs, and the two approaches fail in different places. That difference is the scientific content of the project.
@@ -80,63 +142,11 @@ Extending the same benchmark framework to fusion chimeras (reads joining two dif
 
 
 
+
+
 ## Methods
 
 ![Benchmark pipeline, foldback simulation (Task A), and the read-level detector in probe mode (Task C)](methods.png)
-
-## Usage
-
-### Environment
-
-Conda (recommended):
-```bash
-conda env create -f environment.yml
-conda activate foldback-detector
-```
-
-(Or alternatively) Pip only:
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-### Quickstart
-
-Run the read-level detector on a FASTQ:
-```bash
-python detectors/read_level_detector.py --fastq sim/sim_middle.fastq --outdir results/
-```
-
-This writes two TSVs to `results/` (see [schema.md](schema.md)):
-* `calls_foldback_hunter_<stem>.tsv` — `read_id, method, flagged`
-* `scores_foldback_hunter_<stem>.tsv` — `read_id, raw_score, fold_position_bp, status`
-
-`<stem>` is the fastq filename stem, e.g. `foo.fastq.gz` -> `foo`.
-
-### Options
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `--fastq` | *(required)* | Input FASTQ, plain or `.gz`. |
-| `--outdir` | `results` | Output directory (created if missing). |
-| `--mode` | `probe` | Scoring mode: `probe` (fast edlib infix search), `full` (parasail Smith-Waterman, slow — needs `--max-reads`), or `seed` (k-mer seed + bounded edlib, good middle ground). |
-| `--processes` | `None` | Number of worker processes for parallel scoring. |
-| `--max-reads` | `None` | Cap reads scored; required when `--mode full`. |
-
-### Example
-
-```bash
-python detectors/read_level_detector.py \
-  --fastq data/sim_near_end.fastq.gz \
-  --mode seed --processes 8 \
-  --outdir results/
-```
-```
-[foldback_hunter] 50000 reads scored, mode=seed
-[foldback_hunter] wrote results/calls_foldback_hunter_near_end.tsv
-[foldback_hunter] wrote results/scores_foldback_hunter_near_end.tsv
-```
 
 ## Results
 
