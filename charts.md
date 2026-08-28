@@ -13,41 +13,61 @@ flowchart TD
     RF --> CALLS
 
     CALLS --> D["Benchmarking<br/>vs. ground truth →<br/>recall, precision, FPR"]
+
+    classDef detailA fill:#DCEEFB,stroke:#4A90D9,stroke-width:2px,color:#1a1a1a;
+    classDef detailC fill:#FDECD8,stroke:#E8963C,stroke-width:2px,color:#1a1a1a;
+    class B2 detailA;
+    class RF detailC;
 ```
 
 Detail diagrams: [A]-detail, [C]-detail (below).
 
 ---
 
-# [A]-detail — Simulation of foldback reads
+# Simulation of foldback reads
 
 ```mermaid
 flowchart TD
     G[HG002 assembly] --> P[PBSIM3<br/>simulated ONT reads]
-    P --> CL[Clean simulated reads]
+    P --> CL["Clean simulated reads (50x)"]
 
-    CL --> RS[Reservoir sampling] --> CB[Clean-read baseline]
-    CL --> FC[Foldback conversion]
+    CL --> RS[Reservoir sampling] --> CB["Clean-read baseline (20x)"]
+    CL --> FC["Foldback conversion<br/>S → S·revcomp(S)"]
+
+    FC --> FRC{Foldback fraction}
+    FRC --> F1["1%"]
+    FRC --> F5["5%"]
+    FRC --> F10["10%"]
 
     FC --> FPC{Fold position}
-    FPC --> MID[Middle]
-    FPC --> OFF[Off-center]
-    FPC --> NEAR[Near-end]
+    FPC --> MID["Middle<br/>(45–55% of read)"]
+    FPC --> OFF["Off-center<br/>(70–80%)"]
+    FPC --> NEAR["Near-end<br/>(last 50–500 bp)"]
 
-    MID --> ADAPT[± adapter at<br/>fold junction]
-    OFF --> ADAPT
-    NEAR --> ADAPT
+    F1 --> SWEEP["Sweep: 3 fractions × 3 positions<br/>= 9 conditions"]
+    F5 --> SWEEP
+    F10 --> SWEEP
+    MID --> SWEEP
+    OFF --> SWEEP
+    NEAR --> SWEEP
 
-    ADAPT --> SWEEP["Sweep: 3 fractions × 3 positions<br/>= 9 conditions"]
-    SWEEP --> OUT[Simulated reads +<br/>ground truth labels]
+    SWEEP --> ADAPT["± adapter at fold junction, p=0.2<br/>(stratified within each condition)"]
+    ADAPT --> OUT[Simulated reads +<br/>ground truth labels]
+
+    classDef detailA fill:#DCEEFB,stroke:#4A90D9,stroke-width:2px,color:#1a1a1a;
+    class G,P,CL,RS,CB,FC,FRC,F1,F5,F10,FPC,MID,OFF,NEAR,SWEEP,ADAPT,OUT detailA;
 ```
 
 ---
 
-# [C]-detail — foldback-hunter (ours)
+# foldback-hunter (ours)
 
 Reference-free: detects a read's self-complementarity directly, no alignment to genome.
-**Probe mode** is primary (ran on full dataset); **full mode** is a partial spot-check only.
+
+
+**Probe mode** is primary (ran on full dataset); 
+
+**full mode** is a partial spot-check only.
 
 ## Probe mode
 
@@ -63,6 +83,9 @@ flowchart TD
     SCORE --> Q3{Score high enough?}
     Q3 -->|yes| R3([Foldback call +<br/>fold position])
     Q3 -->|no| R2([No match])
+
+    classDef detailC fill:#FDECD8,stroke:#E8963C,stroke-width:2px,color:#1a1a1a;
+    class START,Q1,R1,LOOP,CALC,KEEP,SCORE,Q3,R3,R2 detailC;
 ```
 
 ## Full mode
@@ -73,4 +96,7 @@ flowchart TD
     B --> C[Align read vs.<br/>its reverse complement]
     C --> D{High similarity?}
     D -->|yes| E([Foldback call])
+
+    classDef detailC fill:#FDECD8,stroke:#E8963C,stroke-width:2px,color:#1a1a1a;
+    class A,B,C,D,E detailC;
 ```
