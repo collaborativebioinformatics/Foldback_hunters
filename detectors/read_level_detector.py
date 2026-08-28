@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-CLI for reference-free foldback read-level detection
+foldback_hunter: CLI for reference-free foldback read-level detection
 
     python detectors/read_level_detector.py --fastq <input.fastq> \
         --outdir results/ \
         [--processes N] [--mode probe|full|seed --max-reads N]
 
-Writes calls_read_level_detector_<stem>.tsv (read_id, method, flagged)
-and scores_read_level_detector_<stem>.tsv (read_id, raw_score,
+Writes calls_foldback_hunter_<stem>.tsv (read_id, method, flagged)
+and scores_foldback_hunter_<stem>.tsv (read_id, raw_score,
 fold_position_bp, status). flagged is the raw float score, not a threshold.
 <stem> is the fastq filename stem (e.g. foo.fastq.gz -> foo).
 """
@@ -86,8 +86,8 @@ def main():
     else:
         results = [_score_worker(t) for t in tasks]
 
-    calls_path = os.path.join(args.outdir, f"calls_read_level_detector_{stem}.tsv")
-    scores_path = os.path.join(args.outdir, f"scores_read_level_detector_{stem}.tsv")
+    calls_path = os.path.join(args.outdir, f"calls_foldback_hunter_{stem}.tsv")
+    scores_path = os.path.join(args.outdir, f"scores_foldback_hunter_{stem}.tsv")
 
     with open(calls_path, "w", newline="") as calls_fh, \
          open(scores_path, "w", newline="") as scores_fh:
@@ -101,9 +101,9 @@ def main():
             calls_writer.writerow([r.read_id, "read_level_detector", raw_score])
             scores_writer.writerow([r.read_id, raw_score, fold_pos, r.status])
 
-    print(f"[read_level_detector] {len(results)} reads scored, mode={args.mode}")
-    print(f"[read_level_detector] wrote {calls_path}")
-    print(f"[read_level_detector] wrote {scores_path}")
+    print(f"[foldback_hunter] {len(results)} reads scored, mode={args.mode}")
+    print(f"[foldback_hunter] wrote {calls_path}")
+    print(f"[foldback_hunter] wrote {scores_path}")
 
 
 if __name__ == "__main__":

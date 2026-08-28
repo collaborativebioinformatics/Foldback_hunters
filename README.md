@@ -109,8 +109,8 @@ python detectors/read_level_detector.py --fastq sim/sim_middle.fastq --outdir re
 ```
 
 This writes two TSVs to `results/` (see [schema.md](schema.md)):
-* `calls_read_level_detector_<stem>.tsv` — `read_id, method, flagged`
-* `scores_read_level_detector_<stem>.tsv` — `read_id, raw_score, fold_position_bp, status`
+* `calls_foldback_hunter_<stem>.tsv` — `read_id, method, flagged`
+* `scores_foldback_hunter_<stem>.tsv` — `read_id, raw_score, fold_position_bp, status`
 
 `<stem>` is the fastq filename stem, e.g. `foo.fastq.gz` -> `foo`.
 
@@ -133,9 +133,9 @@ python detectors/read_level_detector.py \
   --outdir results/
 ```
 ```
-[read_level_detector] 50000 reads scored, mode=seed
-[read_level_detector] wrote results/calls_read_level_detector_near_end.tsv
-[read_level_detector] wrote results/scores_read_level_detector_near_end.tsv
+[foldback_hunter] 50000 reads scored, mode=seed
+[foldback_hunter] wrote results/calls_foldback_hunter_near_end.tsv
+[foldback_hunter] wrote results/scores_foldback_hunter_near_end.tsv
 ```
 
 ## Results
