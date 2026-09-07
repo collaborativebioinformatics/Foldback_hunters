@@ -1,16 +1,13 @@
 """
-Reference-free foldback read-level scoring (Task C).
+Reference-free foldback read-level scoring.
 
 Signature: read ~= forward_part + RC(segment_near_fold).
 
 Three modes:
   - probe: edlib infix search of RC(tail) within the read.
   - full:  parasail Smith-Waterman of read vs RC(read).
-  - seed:  k-mer seed match (sparse dict from RC(read) vs. dense scan of
-           read) to find a candidate junction, verified with a single
-           bounded edlib HW call around that candidate.
-
-revcomp() is reimplemented locally (does not import sim/simulate_foldbacks_v2.py).
+  - seed:  k-mer seed match (sparse dict from RC(read) vs. dense scan of read) to find a candidate junction, 
+           verified with a bounded edlib HW call around that candidate.
 """
 
 from dataclasses import dataclass
@@ -21,12 +18,13 @@ import parasail
 
 COMPLEMENT = str.maketrans("ACGTNacgtn", "TGCANtgcan")
 
-DEFAULT_PROBE_LENGTHS = (50, 150, 500, 1500)
-DEFAULT_MIN_LEN = 1000
-DEFAULT_SEED_K = 13
-DEFAULT_SEED_WINDOW = 500
+PROBE_LENGTHS = (50, 150, 500, 1500)
+MIN_LEN = 1000
+SEED_K = 13
+SEED_WINDOW = 500
 
-# EMBOSS/dnafull-style gap penalties for full mode (confirmed with user).
+# EMBOSS/dnafull-style gap penalties for full mode
+# future work: tune them for real ONT sequencing reads
 GAP_OPEN = 10
 GAP_EXTEND = 1
 
@@ -43,8 +41,7 @@ class ScoreResult:
     status: str
 
 
-def score_read_probe(read_id, seq, probe_lengths=DEFAULT_PROBE_LENGTHS,
-                      min_len=DEFAULT_MIN_LEN) -> ScoreResult:
+def score_read_probe(read_id, seq, probe_lengths=PROBE_LENGTHS, min_len=MIN_LEN) -> ScoreResult:
     if len(seq) < min_len:
         return ScoreResult(read_id, None, None, "too_short")
 
@@ -52,7 +49,8 @@ def score_read_probe(read_id, seq, probe_lengths=DEFAULT_PROBE_LENGTHS,
     best_score = None
     best_k = None
     best_hit = None
-
+    # abcdd'c'
+    #   cdd'c'b'a'
     for k in probe_lengths:
         k = min(k, len(seq))
         probe = seq_rc[:k]
@@ -82,7 +80,7 @@ def score_read_probe(read_id, seq, probe_lengths=DEFAULT_PROBE_LENGTHS,
     return ScoreResult(read_id, best_score, fold_position_bp, "ok")
 
 
-def score_read_full(read_id, seq, min_len=DEFAULT_MIN_LEN) -> ScoreResult:
+def score_read_full(read_id, seq, min_len=MIN_LEN) -> ScoreResult:
     if len(seq) < min_len:
         return ScoreResult(read_id, None, None, "too_short")
 
@@ -105,8 +103,7 @@ def score_read_full(read_id, seq, min_len=DEFAULT_MIN_LEN) -> ScoreResult:
     return ScoreResult(read_id, identity, fold_position_bp, "ok")
 
 
-def score_read_seed(read_id, seq, k=DEFAULT_SEED_K, window=DEFAULT_SEED_WINDOW,
-                     min_len=DEFAULT_MIN_LEN) -> ScoreResult:
+def score_read_seed(read_id, seq, k=SEED_K, window=SEED_WINDOW, min_len=MIN_LEN) -> ScoreResult:
     if len(seq) < min_len:
         return ScoreResult(read_id, None, None, "too_short")
 
