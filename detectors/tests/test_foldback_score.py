@@ -44,7 +44,7 @@ def make_foldback_read(L, p, seed=0):
 def test_probe_position_exact(L, p):
     read, _t = make_foldback_read(L, p, seed=1)
     result = score_read_probe("r1", read, probe_lengths=DEFAULT_PROBE_LENGTHS, min_len=1000)
-    assert result.status == "ok"
+    assert result.status == "scored"
     assert result.raw_score == 1.0
     assert result.fold_position_bp == p
 
@@ -66,7 +66,7 @@ def test_probe_position_exact(L, p):
 def test_full_position_exact(L, p):
     read, _t = make_foldback_read(L, p, seed=5)
     result = score_read_full("r5", read, min_len=1000)
-    assert result.status == "ok"
+    assert result.status == "scored"
     assert result.raw_score == pytest.approx(1.0)
     assert result.fold_position_bp == p
 
@@ -95,7 +95,7 @@ def test_seed_position_off_center():
     # t=1250, off the stride-k grid: (p - t) mod k != 0.
     read, _t = make_foldback_read(5000, 3750, seed=1)
     result = score_read_seed("s1", read, min_len=1000)
-    assert result.status == "ok"
+    assert result.status == "scored"
     assert abs(result.fold_position_bp - 3750) <= 5
 
 
@@ -106,7 +106,7 @@ def test_seed_no_match_unrelated_sequence():
     b = "".join(rng_b.choice("ACGT") for _ in range(2000))
     read = a + b  # no self-complementarity: two unrelated random halves
     result = score_read_seed("s2", read, min_len=1000)
-    assert result.status == "no_match" or (result.raw_score or 0.0) < 0.5
+    assert result.status == "no_alignment" or (result.raw_score or 0.0) < 0.5
 
 
 @pytest.mark.xfail(
@@ -119,7 +119,7 @@ def test_seed_position_near_end():
     read, t = make_foldback_read(5000, 4850, seed=1)
     assert t == 150
     result = score_read_seed("s3", read, min_len=1000)
-    assert result.status == "ok"
+    assert result.status == "scored"
     assert result.fold_position_bp == 4850
 
 
@@ -142,7 +142,7 @@ def test_n_base_full_pinned_score():
     assert t == 100
     mutated = read[:100] + "N" + read[101:]
     result = score_read_full("n1", mutated, min_len=10)
-    assert result.status == "ok"
+    assert result.status == "scored"
     assert result.raw_score == pytest.approx(198 / 200)
     assert abs(result.fold_position_bp - p) <= 1
 
@@ -155,5 +155,5 @@ def test_n_base_probe_no_special_casing():
     assert t == 100
     mutated = read[:10] + "N" + read[11:]
     result = score_read_probe("n2", mutated, probe_lengths=(50,), min_len=10)
-    assert result.status == "ok"
+    assert result.status == "scored"
     assert result.raw_score == pytest.approx(49 / 50)

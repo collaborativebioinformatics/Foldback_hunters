@@ -69,7 +69,7 @@ def score_read_probe(read_id, seq, probe_lengths=PROBE_LENGTHS, min_len=MIN_LEN)
             best_hit = locations[0] if locations else None
 
     if best_score is None or best_hit is None:
-        return ScoreResult(read_id, 0.0, None, "no_match")
+        return ScoreResult(read_id, 0.0, None, "no_alignment")
 
     hit_start, hit_end = best_hit
     # For read = A + RC(B), fold point p = len(A), tail t = len(B):
@@ -77,7 +77,7 @@ def score_read_probe(read_id, seq, probe_lengths=PROBE_LENGTHS, min_len=MIN_LEN)
     # averaging the two cancels t and recovers p exactly (k-independent).
     fold_position_bp = (hit_start + len(seq)) // 2
 
-    return ScoreResult(read_id, best_score, fold_position_bp, "ok")
+    return ScoreResult(read_id, best_score, fold_position_bp, "scored")
 
 
 def score_read_full(read_id, seq, min_len=MIN_LEN) -> ScoreResult:
@@ -90,7 +90,7 @@ def score_read_full(read_id, seq, min_len=MIN_LEN) -> ScoreResult:
     comp = result.traceback.comp
     aligned_len = len(comp)
     if aligned_len == 0:
-        return ScoreResult(read_id, 0.0, None, "no_match")
+        return ScoreResult(read_id, 0.0, None, "no_alignment")
 
     matches = comp.count("|")
     identity = matches / aligned_len
@@ -100,7 +100,7 @@ def score_read_full(read_id, seq, min_len=MIN_LEN) -> ScoreResult:
     start_query_0idx = result.end_query - matched_len_query + 1
     fold_position_bp = (start_query_0idx + result.end_query) // 2 + 1
 
-    return ScoreResult(read_id, identity, fold_position_bp, "ok")
+    return ScoreResult(read_id, identity, fold_position_bp, "scored")
 
 
 def score_read_seed(read_id, seq, k=SEED_K, window=SEED_WINDOW, min_len=MIN_LEN) -> ScoreResult:
@@ -111,7 +111,7 @@ def score_read_seed(read_id, seq, k=SEED_K, window=SEED_WINDOW, min_len=MIN_LEN)
     seq_rc = revcomp(seq)
 
     if n < k:
-        return ScoreResult(read_id, 0.0, None, "no_match")
+        return ScoreResult(read_id, 0.0, None, "no_alignment")
 
     # Sparse dict of RC(read) k-mers (stride k) scanned against every read
     # position: for read = A + RC(B), fold point p = len(A), a match at
@@ -131,12 +131,12 @@ def score_read_seed(read_id, seq, k=SEED_K, window=SEED_WINDOW, min_len=MIN_LEN)
             break
 
     if candidate_p is None:
-        return ScoreResult(read_id, 0.0, None, "no_match")
+        return ScoreResult(read_id, 0.0, None, "no_alignment")
 
     a_start = max(0, candidate_p - window)
     query = seq[a_start:candidate_p]
     if not query:
-        return ScoreResult(read_id, 0.0, None, "no_match")
+        return ScoreResult(read_id, 0.0, None, "no_alignment")
 
     t_start = max(0, candidate_p - window)
     t_end = min(n, candidate_p + window)
@@ -146,7 +146,7 @@ def score_read_seed(read_id, seq, k=SEED_K, window=SEED_WINDOW, min_len=MIN_LEN)
     result = edlib.align(query, target, mode="HW", task="locations")
     edit_distance = result["editDistance"]
     if edit_distance < 0 or not result["locations"]:
-        return ScoreResult(read_id, 0.0, None, "no_match")
+        return ScoreResult(read_id, 0.0, None, "no_alignment")
 
     raw_score = 1 - edit_distance / len(query)
 
@@ -156,7 +156,7 @@ def score_read_seed(read_id, seq, k=SEED_K, window=SEED_WINDOW, min_len=MIN_LEN)
     _loc_start, loc_end = result["locations"][0]
     fold_position_bp = t_start + (len(region) - 1 - loc_end)
 
-    return ScoreResult(read_id, raw_score, fold_position_bp, "ok")
+    return ScoreResult(read_id, raw_score, fold_position_bp, "scored")
 
 
 def score_read(read_id, seq, mode="probe", **kwargs) -> ScoreResult:

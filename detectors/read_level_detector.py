@@ -8,8 +8,8 @@ foldback_hunter: CLI for reference-free foldback read-level detection
 
 Writes calls_foldback_hunter_<stem>.tsv (read_id, method, flagged)
 and scores_foldback_hunter_<stem>.tsv (read_id, raw_score,
-fold_position_bp, status). flagged is the raw float score, not a threshold.
-<stem> is the fastq filename stem (e.g. foo.fastq.gz -> foo).
+fold_position_bp, status). flagged is a boolean: raw_score >= --threshold
+(default 0.8). <stem> is the fastq filename stem (e.g. foo.fastq.gz -> foo).
 """
 
 import argparse
@@ -57,6 +57,15 @@ def _score_worker(task):
     return score_read(read_id, seq, mode=mode)
 
 
+def threshold_type(value):
+    threshold = float(value)
+    if not 0 <= threshold <= 1:
+        raise argparse.ArgumentTypeError(
+            f"--threshold must be in [0, 1], got {value!r}"
+        )
+    return threshold
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -77,6 +86,11 @@ def main():
     ap.add_argument("--mode", choices=["probe", "full", "seed"], default="probe")
     ap.add_argument("--max-reads", type=int, default=None,
                      help="Cap the number of reads scored. Required when --mode full.")
+    ap.add_argument("--threshold", type=threshold_type, default=0.8,
+        help="Minimum raw_score to flag a read as foldback, range [0,1]. "
+             "Default 0.8 matches analysis/plot_Framing_A.py's published "
+             "9-condition benchmark threshold — do not change the default "
+             "without rerunning that analysis.")
     args = ap.parse_args()
 
     if args.mode == "full" and args.max_reads is None:
@@ -122,7 +136,8 @@ def main():
         for r in results:
             raw_score = "" if r.raw_score is None else r.raw_score
             fold_pos = "" if r.fold_position_bp is None else r.fold_position_bp
-            calls_writer.writerow([r.read_id, "read_level_detector", raw_score])
+            flagged = r.raw_score is not None and r.raw_score >= args.threshold
+            calls_writer.writerow([r.read_id, "read_level_detector", flagged])
             scores_writer.writerow([r.read_id, raw_score, fold_pos, r.status])
 
     print(f"[foldback_hunter] {len(results)} reads scored, mode={args.mode}")
