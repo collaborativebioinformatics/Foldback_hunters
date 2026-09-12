@@ -16,8 +16,10 @@ import argparse
 import csv
 import gzip
 import itertools
+import json
 import os
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Pool
 
@@ -115,6 +117,7 @@ def main():
 
     tasks = ((read_id, seq, args.mode) for read_id, seq in reads)
 
+    scoring_start = time.perf_counter()
     if args.processes:
         with Pool(args.processes) as pool:
             results = pool.map(_score_worker, tasks)
@@ -123,6 +126,7 @@ def main():
             results = list(executor.map(_score_worker, tasks))
     else:
         results = [_score_worker(t) for t in tasks]
+    runtime_sec = time.perf_counter() - scoring_start
 
     calls_path = os.path.join(args.outdir, f"calls_foldback_hunter_{stem}.tsv")
     scores_path = os.path.join(args.outdir, f"scores_foldback_hunter_{stem}.tsv")
@@ -140,9 +144,35 @@ def main():
             calls_writer.writerow([r.read_id, "read_level_detector", flagged])
             scores_writer.writerow([r.read_id, raw_score, fold_pos, r.status])
 
+    total_reads = len(results)
+    flagged_reads = sum(
+        1 for r in results if r.raw_score is not None and r.raw_score >= args.threshold
+    )
+    foldback_rate = round(flagged_reads / total_reads, 4) if total_reads else 0.0
+
+    summary = {
+        "input": args.fastq,
+        "mode": args.mode,
+        "threshold": args.threshold,
+        "processes": args.processes,
+        "threads": args.threads,
+        "total_reads": total_reads,
+        "flagged_reads": flagged_reads,
+        "clipped_reads": 0,
+        "filtered_reads": 0,
+        "foldback_rate": foldback_rate,
+        "runtime_sec": round(runtime_sec, 4),
+    }
+
+    summary_path = os.path.join(args.outdir, f"summary_foldback_hunter_{stem}.json")
+    with open(summary_path, "w") as summary_fh:
+        json.dump(summary, summary_fh, indent=2)
+        summary_fh.write("\n")
+
     print(f"[foldback_hunter] {len(results)} reads scored, mode={args.mode}")
     print(f"[foldback_hunter] wrote {calls_path}")
     print(f"[foldback_hunter] wrote {scores_path}")
+    print(f"[foldback_hunter] wrote {summary_path}")
 
 
 if __name__ == "__main__":

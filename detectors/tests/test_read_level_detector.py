@@ -4,6 +4,7 @@ Unit tests for detectors/read_level_detector.py's CLI: backend equivalence
 and --threads, and the --threads + --mode seed warn-only behavior.
 """
 
+import json
 import random
 import sys
 
@@ -94,3 +95,28 @@ def test_threads_seed_mode_warns_but_completes(tmp_path, monkeypatch, capsys):
     assert "--processes" in stderr
     assert (outdir / "calls_foldback_hunter_in.tsv").exists()
     assert (outdir / "scores_foldback_hunter_in.tsv").exists()
+
+
+def test_summary_json_written(tmp_path, monkeypatch):
+    fastq_path = make_fastq(tmp_path / "in.fastq")
+    outdir = tmp_path / "out"
+
+    _run(fastq_path, outdir, [], monkeypatch)
+
+    calls_text, _ = _read_tsvs(outdir, "in")
+    calls_rows = calls_text.strip().splitlines()[1:]
+    flagged_count = sum(1 for row in calls_rows if row.split("\t")[2] == "True")
+
+    summary = json.loads((outdir / "summary_foldback_hunter_in.json").read_text())
+
+    assert summary["total_reads"] == 3
+    assert summary["flagged_reads"] == flagged_count
+    assert summary["clipped_reads"] == 0
+    assert summary["filtered_reads"] == 0
+    assert summary["foldback_rate"] == round(flagged_count / 3, 4)
+    assert summary["mode"] == "probe"
+    assert summary["threshold"] == 0.8
+    assert summary["processes"] is None
+    assert summary["threads"] is None
+    assert isinstance(summary["runtime_sec"], (int, float))
+    assert summary["runtime_sec"] >= 0

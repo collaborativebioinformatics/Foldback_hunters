@@ -39,9 +39,10 @@ Run the read-level detector on a FASTQ:
 python detectors/read_level_detector.py --fastq sim/sim_middle.fastq --outdir results/
 ```
 
-This writes two TSVs to `results/` (see [schema.md](schema.md)):
+This writes two TSVs and a summary JSON to `results/` (see [schema.md](schema.md)):
 * `calls_foldback_hunter_<stem>.tsv` — `read_id, method, flagged`
 * `scores_foldback_hunter_<stem>.tsv` — `read_id, raw_score, fold_position_bp, status`
+* `summary_foldback_hunter_<stem>.json` — run stats: input, mode, threshold, processes, threads, total_reads, flagged_reads, clipped_reads, filtered_reads, foldback_rate, runtime_sec
 
 `<stem>` is the fastq filename stem, e.g. `foo.fastq.gz` -> `foo`.
 
@@ -68,6 +69,7 @@ python detectors/read_level_detector.py \
 [foldback_hunter] 50000 reads scored, mode=seed
 [foldback_hunter] wrote results/calls_foldback_hunter_near_end.tsv
 [foldback_hunter] wrote results/scores_foldback_hunter_near_end.tsv
+[foldback_hunter] wrote results/summary_foldback_hunter_near_end.json
 ```
 
 ```bash
@@ -80,6 +82,7 @@ python detectors/read_level_detector.py \
 [foldback_hunter] 50000 reads scored, mode=probe
 [foldback_hunter] wrote results/calls_foldback_hunter_near_end.tsv
 [foldback_hunter] wrote results/scores_foldback_hunter_near_end.tsv
+[foldback_hunter] wrote results/summary_foldback_hunter_near_end.json
 ```
 
 
