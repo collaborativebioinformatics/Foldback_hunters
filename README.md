@@ -52,7 +52,8 @@ This writes two TSVs to `results/` (see [schema.md](schema.md)):
 | `--fastq` | *(required)* | Input FASTQ, plain or `.gz`. |
 | `--outdir` | `results` | Output directory (created if missing). |
 | `--mode` | `probe` | Scoring mode: `probe` (fast edlib infix search), `full` (parasail Smith-Waterman, slow — needs `--max-reads`), or `seed` (k-mer seed + bounded edlib, good middle ground). |
-| `--processes` | `None` | Number of worker processes for parallel scoring. |
+| `--processes` | `None` | Number of worker processes for parallel scoring. Mutually exclusive with `--threads`. |
+| `--threads` | `None` | Number of threads for parallel scoring (`concurrent.futures.ThreadPoolExecutor`). Threads well for `--mode full`/`probe` (parasail/edlib release the GIL), but not `--mode seed` (pure-Python k-mer matching loop holds the GIL) — use `--processes` there instead. Mutually exclusive with `--processes`. |
 | `--max-reads` | `None` | Cap reads scored; required when `--mode full`. |
 
 ### Example
@@ -65,6 +66,18 @@ python detectors/read_level_detector.py \
 ```
 ```
 [foldback_hunter] 50000 reads scored, mode=seed
+[foldback_hunter] wrote results/calls_foldback_hunter_near_end.tsv
+[foldback_hunter] wrote results/scores_foldback_hunter_near_end.tsv
+```
+
+```bash
+python detectors/read_level_detector.py \
+  --fastq data/sim_near_end.fastq.gz \
+  --mode probe --threads 8 \
+  --outdir results/
+```
+```
+[foldback_hunter] 50000 reads scored, mode=probe
 [foldback_hunter] wrote results/calls_foldback_hunter_near_end.tsv
 [foldback_hunter] wrote results/scores_foldback_hunter_near_end.tsv
 ```

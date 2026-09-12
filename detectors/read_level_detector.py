@@ -4,7 +4,7 @@ foldback_hunter: CLI for reference-free foldback read-level detection
 
     python detectors/read_level_detector.py --fastq <input.fastq> \
         --outdir results/ \
-        [--processes N] [--mode probe|full|seed --max-reads N]
+        [--processes N | --threads N] [--mode probe|full|seed --max-reads N]
 
 Writes calls_foldback_hunter_<stem>.tsv (read_id, method, flagged)
 and scores_foldback_hunter_<stem>.tsv (read_id, raw_score,
@@ -17,6 +17,8 @@ import csv
 import gzip
 import itertools
 import os
+import sys
+from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Pool
 
 from foldback_score import score_read
@@ -61,8 +63,17 @@ def main():
     )
     ap.add_argument("--fastq", required=True, help="Input FASTQ (plain or .gz).")
     ap.add_argument("--outdir", default="results")
-    ap.add_argument("--processes", type=int, default=None,
-                     help="If set, score reads in parallel with this many workers.")
+    parallel_group = ap.add_mutually_exclusive_group()
+    parallel_group.add_argument("--processes", type=int, default=None,
+        help="If set, score reads in parallel with this many worker processes.")
+    parallel_group.add_argument("--threads", type=int, default=None,
+        help=("If set, score reads in parallel with this many threads "
+              "(concurrent.futures.ThreadPoolExecutor). Threads well for "
+              "--mode full/probe (parasail/edlib release the GIL); does not "
+              "thread well for --mode seed, whose k-mer matching loop is "
+              "pure Python and holds the GIL — a warning is printed if you "
+              "combine --threads with --mode seed, use --processes there "
+              "instead for real speedup. Mutually exclusive with --processes."))
     ap.add_argument("--mode", choices=["probe", "full", "seed"], default="probe")
     ap.add_argument("--max-reads", type=int, default=None,
                      help="Cap the number of reads scored. Required when --mode full.")
@@ -70,6 +81,16 @@ def main():
 
     if args.mode == "full" and args.max_reads is None:
         raise SystemExit("--mode full requires --max-reads: no cap = no run.")
+
+    if args.threads and args.mode == "seed":
+        print(
+            "[foldback_hunter] WARNING: --threads with --mode seed will not "
+            "scale — seed mode's k-mer matching loop is pure Python and "
+            "holds the GIL, so threads serialize on it (edlib's own GIL "
+            "release inside that loop doesn't help). Use --processes for "
+            "real speedup in seed mode. Continuing anyway.",
+            file=sys.stderr,
+        )
 
     stem = parse_stem(args.fastq)
     os.makedirs(args.outdir, exist_ok=True)
@@ -83,6 +104,9 @@ def main():
     if args.processes:
         with Pool(args.processes) as pool:
             results = pool.map(_score_worker, tasks)
+    elif args.threads:
+        with ThreadPoolExecutor(max_workers=args.threads) as executor:
+            results = list(executor.map(_score_worker, tasks))
     else:
         results = [_score_worker(t) for t in tasks]
 
