@@ -5,6 +5,7 @@ channels:
 dependencies:
   - python=3.10
   - parasail-python
+  - pysam
   - pytest
   - pip
   - pip:

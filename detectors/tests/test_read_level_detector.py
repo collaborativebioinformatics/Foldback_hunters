@@ -40,7 +40,7 @@ def make_fastq(path):
 def _run(fastq_path, outdir, extra_args, monkeypatch, mode="probe"):
     argv = [
         "read_level_detector.py",
-        "--fastq", str(fastq_path),
+        "--input", str(fastq_path),
         "--outdir", str(outdir),
         "--mode", mode,
     ] + extra_args
@@ -120,3 +120,19 @@ def test_summary_json_written(tmp_path, monkeypatch):
     assert summary["threads"] is None
     assert isinstance(summary["runtime_sec"], (int, float))
     assert summary["runtime_sec"] >= 0
+
+
+@pytest.mark.parametrize("path,expected", [
+    ("reads.fastq", "fastq"),
+    ("reads.fq", "fastq"),
+    ("reads.fastq.gz", "fastq.gz"),
+    ("reads.fq.gz", "fastq.gz"),
+    ("reads.bam", "bam"),
+])
+def test_detect_format(path, expected):
+    assert rld.detect_format(path) == expected
+
+
+def test_detect_format_unrecognized_extension_raises():
+    with pytest.raises(SystemExit):
+        rld.detect_format("reads.sam")

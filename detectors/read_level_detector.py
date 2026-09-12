@@ -2,14 +2,15 @@
 """
 foldback_hunter: CLI for reference-free foldback read-level detection
 
-    python detectors/read_level_detector.py --fastq <input.fastq> \
+    python detectors/read_level_detector.py --input <reads.fastq|.fastq.gz|.bam> \
         --outdir results/ \
         [--processes N | --threads N] [--mode probe|full|seed --max-reads N]
 
 Writes calls_foldback_hunter_<stem>.tsv (read_id, method, flagged)
 and scores_foldback_hunter_<stem>.tsv (read_id, raw_score,
 fold_position_bp, status). flagged is a boolean: raw_score >= --threshold
-(default 0.8). <stem> is the fastq filename stem (e.g. foo.fastq.gz -> foo).
+(default 0.8). <stem> is the input filename stem (e.g. foo.fastq.gz -> foo,
+foo.bam -> foo).
 """
 
 import argparse
@@ -23,7 +24,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Pool
 
-from foldback_score import score_read
+from foldback_score import revcomp, score_read
 
 
 def open_maybe_gz(path, mode="rt"):
@@ -46,12 +47,43 @@ def iter_fastq(path):
             yield read_id, seq.upper()
 
 
+def iter_bam(path):
+    """Yield (read_id, seq) from a BAM (aligned or unaligned), primary records only."""
+    import pysam  # deferred: only needed for BAM input, keeps FASTQ path pysam-free
+
+    with pysam.AlignmentFile(path, "rb", check_sq=False) as af:
+        for rec in af:
+            if rec.is_secondary or rec.is_supplementary:
+                continue
+            seq = rec.query_sequence
+            if seq is None:
+                continue
+            if rec.is_reverse:
+                seq = revcomp(seq)
+            yield rec.query_name, seq.upper()
+
+
 def parse_stem(fastq_path):
     basename = os.path.basename(fastq_path)
     if basename.endswith(".gz"):
         basename = basename[: -len(".gz")]
     stem, _ext = os.path.splitext(basename)
     return stem
+
+
+def detect_format(path):
+    """Classify an input path by extension: fastq, fastq.gz, or bam."""
+    lower = path.lower()
+    if lower.endswith(".fastq.gz") or lower.endswith(".fq.gz"):
+        return "fastq.gz"
+    if lower.endswith(".fastq") or lower.endswith(".fq"):
+        return "fastq"
+    if lower.endswith(".bam"):
+        return "bam"
+    raise SystemExit(
+        f"Unrecognized input extension: {path!r}. "
+        "Expected .fastq, .fq, .fastq.gz, .fq.gz, or .bam."
+    )
 
 
 def _score_worker(task):
@@ -72,7 +104,7 @@ def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--fastq", required=True, help="Input FASTQ (plain or .gz).")
+    ap.add_argument("--input", required=True, help="Input reads: FASTQ (plain or .gz) or BAM.")
     ap.add_argument("--outdir", default="results")
     parallel_group = ap.add_mutually_exclusive_group()
     parallel_group.add_argument("--processes", type=int, default=None,
@@ -108,10 +140,14 @@ def main():
             file=sys.stderr,
         )
 
-    stem = parse_stem(args.fastq)
+    stem = parse_stem(args.input)
     os.makedirs(args.outdir, exist_ok=True)
 
-    reads = iter_fastq(args.fastq)
+    fmt = detect_format(args.input)
+    if fmt in ("fastq", "fastq.gz"):
+        reads = iter_fastq(args.input)
+    elif fmt == "bam":
+        reads = iter_bam(args.input)
     if args.max_reads is not None:
         reads = itertools.islice(reads, args.max_reads)
 
@@ -151,7 +187,7 @@ def main():
     foldback_rate = round(flagged_reads / total_reads, 4) if total_reads else 0.0
 
     summary = {
-        "input": args.fastq,
+        "input": args.input,
         "mode": args.mode,
         "threshold": args.threshold,
         "processes": args.processes,

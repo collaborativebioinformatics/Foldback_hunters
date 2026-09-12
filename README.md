@@ -34,9 +34,9 @@ pip install -r requirements.txt
 
 ### Quickstart
 
-Run the read-level detector on a FASTQ:
+Run the read-level detector on a FASTQ or BAM:
 ```bash
-python detectors/read_level_detector.py --fastq sim/sim_middle.fastq --outdir results/
+python detectors/read_level_detector.py --input sim/sim_middle.fastq --outdir results/
 ```
 
 This writes two TSVs and a summary JSON to `results/` (see [schema.md](schema.md)):
@@ -44,13 +44,13 @@ This writes two TSVs and a summary JSON to `results/` (see [schema.md](schema.md
 * `scores_foldback_hunter_<stem>.tsv` — `read_id, raw_score, fold_position_bp, status`
 * `summary_foldback_hunter_<stem>.json` — run stats: input, mode, threshold, processes, threads, total_reads, flagged_reads, clipped_reads, filtered_reads, foldback_rate, runtime_sec
 
-`<stem>` is the fastq filename stem, e.g. `foo.fastq.gz` -> `foo`.
+`<stem>` is the input filename stem, e.g. `foo.fastq.gz` -> `foo`, `foo.bam` -> `foo`.
 
 ### Options
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--fastq` | *(required)* | Input FASTQ, plain or `.gz`. |
+| `--input` | *(required)* | Input reads: FASTQ (plain or `.gz`) or BAM. Format autodetected from extension. |
 | `--outdir` | `results` | Output directory (created if missing). |
 | `--mode` | `probe` | Scoring mode: `probe` (fast edlib infix search), `full` (parasail Smith-Waterman, slow — needs `--max-reads`), or `seed` (k-mer seed + bounded edlib, good middle ground). |
 | `--processes` | `None` | Number of worker processes for parallel scoring. Mutually exclusive with `--threads`. |
@@ -61,7 +61,7 @@ This writes two TSVs and a summary JSON to `results/` (see [schema.md](schema.md
 
 ```bash
 python detectors/read_level_detector.py \
-  --fastq data/sim_near_end.fastq.gz \
+  --input data/sim_near_end.fastq.gz \
   --mode seed --processes 8 \
   --outdir results/
 ```
@@ -74,7 +74,7 @@ python detectors/read_level_detector.py \
 
 ```bash
 python detectors/read_level_detector.py \
-  --fastq data/sim_near_end.fastq.gz \
+  --input data/sim_near_end.fastq.gz \
   --mode probe --threads 8 \
   --outdir results/
 ```
