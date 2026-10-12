@@ -21,6 +21,8 @@ import json
 import os
 import sys
 import time
+from collections import deque
+from contextlib import ExitStack
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Pool
 
@@ -89,6 +91,32 @@ def detect_format(path):
 def _score_worker(task):
     read_id, seq, mode = task
     return score_read(read_id, seq, mode=mode)
+
+
+CHUNKSIZE = 64
+
+
+def _score_chunk(chunk):
+    return [_score_worker(t) for t in chunk]
+
+
+def _ordered_bounded(submit, wait, tasks, window):
+    """Yield scored results in input order with at most `window` chunks in flight.
+
+    Pool.imap / executor.map drain the task generator eagerly, so memory still
+    scales with read count; this keeps a bounded FIFO of submitted chunks.
+    """
+    tasks = iter(tasks)
+    inflight = deque()
+    while True:
+        chunk = list(itertools.islice(tasks, CHUNKSIZE))
+        if not chunk:
+            break
+        inflight.append(submit(chunk))
+        if len(inflight) >= window:
+            yield from wait(inflight.popleft())
+    while inflight:
+        yield from wait(inflight.popleft())
 
 
 def threshold_type(value):
@@ -174,22 +202,30 @@ def main():
 
     tasks = ((read_id, seq, args.mode) for read_id, seq in reads)
 
-    scoring_start = time.perf_counter()
-    if args.processes:
-        with Pool(args.processes) as pool:
-            results = pool.map(_score_worker, tasks)
-    elif args.threads:
-        with ThreadPoolExecutor(max_workers=args.threads) as executor:
-            results = list(executor.map(_score_worker, tasks))
-    else:
-        results = [_score_worker(t) for t in tasks]
-    runtime_sec = time.perf_counter() - scoring_start
-
     calls_path = os.path.join(args.outdir, f"calls_foldback_hunter_{stem}.tsv")
     scores_path = os.path.join(args.outdir, f"scores_foldback_hunter_{stem}.tsv")
 
+    total_reads = 0
+    flagged_reads = 0
+    # runtime_sec covers scoring interleaved with TSV writing (streamed, so the
+    # two cannot be timed separately).
+    scoring_start = time.perf_counter()
     with open(calls_path, "w", newline="") as calls_fh, \
-         open(scores_path, "w", newline="") as scores_fh:
+         open(scores_path, "w", newline="") as scores_fh, \
+         ExitStack() as stack:
+        if args.processes:
+            pool = stack.enter_context(Pool(args.processes))
+            results = _ordered_bounded(
+                lambda c: pool.apply_async(_score_chunk, (c,)),
+                lambda f: f.get(), tasks, 4 * args.processes)
+        elif args.threads:
+            executor = stack.enter_context(ThreadPoolExecutor(max_workers=args.threads))
+            results = _ordered_bounded(
+                lambda c: executor.submit(_score_chunk, c),
+                lambda f: f.result(), tasks, 4 * args.threads)
+        else:
+            results = (_score_worker(t) for t in tasks)
+
         calls_writer = csv.writer(calls_fh, delimiter="\t")
         scores_writer = csv.writer(scores_fh, delimiter="\t")
         calls_writer.writerow(["read_id", "method", "flagged"])
@@ -200,11 +236,10 @@ def main():
             flagged = r.raw_score is not None and r.raw_score >= args.threshold
             calls_writer.writerow([r.read_id, "read_level_detector", flagged])
             scores_writer.writerow([r.read_id, raw_score, fold_pos, r.status])
+            total_reads += 1
+            flagged_reads += flagged
+    runtime_sec = time.perf_counter() - scoring_start
 
-    total_reads = len(results)
-    flagged_reads = sum(
-        1 for r in results if r.raw_score is not None and r.raw_score >= args.threshold
-    )
     foldback_rate = round(flagged_reads / total_reads, 4) if total_reads else 0.0
 
     summary = {
@@ -226,7 +261,7 @@ def main():
         json.dump(summary, summary_fh, indent=2)
         summary_fh.write("\n")
 
-    print(f"[foldback_hunter] {len(results)} reads scored, mode={args.mode}")
+    print(f"[foldback_hunter] {total_reads} reads scored, mode={args.mode}")
     print(f"[foldback_hunter] wrote {calls_path}")
     print(f"[foldback_hunter] wrote {scores_path}")
     print(f"[foldback_hunter] wrote {summary_path}")
