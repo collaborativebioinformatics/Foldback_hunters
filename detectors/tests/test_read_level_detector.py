@@ -1,10 +1,12 @@
 """
 Unit tests for detectors/read_level_detector.py's CLI: backend equivalence
 (sequential / --processes / --threads), mutual exclusivity of --processes
-and --threads, and the --threads + --mode seed warn-only behavior.
+and --threads, the --threads + --mode seed warn-only behavior, and the warn-only
+oversubscription check.
 """
 
 import json
+import os
 import random
 import sys
 
@@ -136,3 +138,38 @@ def test_detect_format(path, expected):
 def test_detect_format_unrecognized_extension_raises():
     with pytest.raises(SystemExit):
         rld.detect_format("reads.sam")
+
+
+@pytest.mark.parametrize("flag", ["--threads", "--processes"])
+def test_oversubscription_warns_but_completes(tmp_path, monkeypatch, capsys, flag):
+    monkeypatch.setattr(rld, "available_cpus", lambda: 2)
+    fastq_path = make_fastq(tmp_path / "in.fastq")
+    outdir = tmp_path / "out"
+
+    _run(fastq_path, outdir, [flag, "4"], monkeypatch)
+
+    stderr = capsys.readouterr().err
+    assert "exceeds" in stderr
+    assert flag in stderr
+    assert (outdir / "calls_foldback_hunter_in.tsv").exists()
+
+
+def test_no_warning_at_cpu_count(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(rld, "available_cpus", lambda: 4)
+    fastq_path = make_fastq(tmp_path / "in.fastq")
+
+    _run(fastq_path, tmp_path / "out", ["--threads", "4"], monkeypatch)
+
+    assert "exceeds" not in capsys.readouterr().err
+
+
+def test_available_cpus_prefers_affinity(monkeypatch):
+    monkeypatch.setattr(os, "sched_getaffinity", lambda pid: {0, 1, 2}, raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 64)
+    assert rld.available_cpus() == 3
+
+
+def test_available_cpus_falls_back_to_cpu_count(monkeypatch):
+    monkeypatch.delattr(os, "sched_getaffinity", raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 8)
+    assert rld.available_cpus() == 8

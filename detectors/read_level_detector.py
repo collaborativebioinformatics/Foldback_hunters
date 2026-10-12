@@ -100,6 +100,14 @@ def threshold_type(value):
     return threshold
 
 
+def available_cpus():
+    """CPUs this process may use: the scheduler affinity mask where the OS
+    exposes it (Linux, honors SLURM cpusets), else os.cpu_count()."""
+    if hasattr(os, "sched_getaffinity"):
+        return len(os.sched_getaffinity(0))
+    return os.cpu_count()
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -108,7 +116,8 @@ def main():
     ap.add_argument("--outdir", default="results")
     parallel_group = ap.add_mutually_exclusive_group()
     parallel_group.add_argument("--processes", type=int, default=None,
-        help="If set, score reads in parallel with this many worker processes.")
+        help=("If set, score reads in parallel with this many worker processes. "
+              "Warns (does not fail) if above the available CPU count."))
     parallel_group.add_argument("--threads", type=int, default=None,
         help=("If set, score reads in parallel with this many threads "
               "(concurrent.futures.ThreadPoolExecutor). Threads well for "
@@ -116,7 +125,8 @@ def main():
               "thread well for --mode seed, whose k-mer matching loop is "
               "pure Python and holds the GIL — a warning is printed if you "
               "combine --threads with --mode seed, use --processes there "
-              "instead for real speedup. Mutually exclusive with --processes."))
+              "instead for real speedup. Mutually exclusive with --processes. Warns (does not fail) if "
+              "above the available CPU count."))
     ap.add_argument("--mode", choices=["probe", "full", "seed"], default="probe")
     ap.add_argument("--max-reads", type=int, default=None,
                      help="Cap the number of reads scored. Required when --mode full.")
@@ -137,6 +147,17 @@ def main():
             "holds the GIL, so threads serialize on it (edlib's own GIL "
             "release inside that loop doesn't help). Use --processes for "
             "real speedup in seed mode. Continuing anyway.",
+            file=sys.stderr,
+        )
+
+    requested = args.processes or args.threads  # mutually exclusive
+    ncpu = available_cpus()
+    if requested and ncpu and requested > ncpu:
+        flag = "--processes" if args.processes else "--threads"
+        print(
+            f"[foldback_hunter] WARNING: {flag} {requested} exceeds the "
+            f"{ncpu} CPUs available to this process; workers will "
+            "oversubscribe cores. Continuing anyway.",
             file=sys.stderr,
         )
 
