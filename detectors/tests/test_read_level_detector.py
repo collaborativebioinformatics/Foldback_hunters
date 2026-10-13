@@ -239,3 +239,21 @@ def test_gz_count_is_estimated(tmp_path):
 
 def test_format_eta():
     assert rld.format_eta(3723) == "1h 2m 3s"
+
+
+@pytest.mark.parametrize("chunksize", [1, 64])
+def test_ordered_bounded_preserves_order(chunksize):
+    from concurrent.futures import ThreadPoolExecutor
+    import time
+
+    def work(chunk):
+        # Earlier chunks sleep longer, so completion order is reversed.
+        time.sleep(0.002 * (50 - chunk[0] % 50))
+        return list(chunk)
+
+    tasks = list(range(300))
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        out = list(rld._ordered_bounded(
+            lambda c: ex.submit(work, c), lambda f: f.result(),
+            iter(tasks), 4, chunksize))
+    assert out == tasks

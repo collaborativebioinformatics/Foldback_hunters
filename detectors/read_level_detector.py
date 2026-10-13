@@ -23,6 +23,7 @@ import csv
 import gzip
 import itertools
 import json
+import math
 import os
 import sys
 import time
@@ -98,23 +99,27 @@ def _score_worker(task):
     return score_read(read_id, seq, mode=mode)
 
 
-CHUNKSIZE = 64
+CHUNKSIZE = 64  # probe/seed; --mode full uses 1 (~1.2 s/read, see FULL_SEC_PER_READ)
 
 
 def _score_chunk(chunk):
     return [_score_worker(t) for t in chunk]
 
 
-def _ordered_bounded(submit, wait, tasks, window):
-    """Yield scored results in input order with at most `window` chunks in flight.
+def _ordered_bounded(submit, wait, tasks, workers, chunksize):
+    """Yield scored results in input order with a bounded number of chunks in flight.
 
     Pool.imap / executor.map drain the task generator eagerly, so memory still
-    scales with read count; this keeps a bounded FIFO of submitted chunks.
+    scales with read count; this keeps a bounded FIFO of submitted chunks. The
+    window is sized in reads, max(4*workers, ceil(16*workers / chunksize))
+    chunks, so small chunks still give enough lookahead that ordered yield does
+    not stall on one slow read. At chunksize 64 this is 4*workers chunks.
     """
+    window = max(4 * workers, math.ceil(16 * workers / chunksize))
     tasks = iter(tasks)
     inflight = deque()
     while True:
-        chunk = list(itertools.islice(tasks, CHUNKSIZE))
+        chunk = list(itertools.islice(tasks, chunksize))
         if not chunk:
             break
         inflight.append(submit(chunk))
@@ -260,6 +265,8 @@ def main():
     calls_path = os.path.join(args.outdir, f"calls_foldback_hunter_{stem}.tsv")
     scores_path = os.path.join(args.outdir, f"scores_foldback_hunter_{stem}.tsv")
 
+    chunksize = 1 if args.mode == "full" else CHUNKSIZE
+
     total_reads = 0
     flagged_reads = 0
     # runtime_sec covers scoring interleaved with TSV writing (streamed, so the
@@ -272,12 +279,12 @@ def main():
             pool = stack.enter_context(Pool(args.processes))
             results = _ordered_bounded(
                 lambda c: pool.apply_async(_score_chunk, (c,)),
-                lambda f: f.get(), tasks, 4 * args.processes)
+                lambda f: f.get(), tasks, args.processes, chunksize)
         elif args.threads:
             executor = stack.enter_context(ThreadPoolExecutor(max_workers=args.threads))
             results = _ordered_bounded(
                 lambda c: executor.submit(_score_chunk, c),
-                lambda f: f.result(), tasks, 4 * args.threads)
+                lambda f: f.result(), tasks, args.threads, chunksize)
         else:
             results = (_score_worker(t) for t in tasks)
 
