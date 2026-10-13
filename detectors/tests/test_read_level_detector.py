@@ -173,3 +173,69 @@ def test_available_cpus_falls_back_to_cpu_count(monkeypatch):
     monkeypatch.delattr(os, "sched_getaffinity", raising=False)
     monkeypatch.setattr(os, "cpu_count", lambda: 8)
     assert rld.available_cpus() == 8
+
+
+# --- --mode full confirmation ------------------------------------------------
+
+def _stdin(monkeypatch, isatty, answer=""):
+    class FakeStdin:
+        def isatty(self):
+            return isatty
+    monkeypatch.setattr(sys, "stdin", FakeStdin())
+    monkeypatch.setattr("builtins.input", lambda prompt="": answer)
+
+
+@pytest.mark.parametrize("answer", ["y", "YES", " yes "])
+def test_full_prompt_accept(tmp_path, monkeypatch, capsys, answer):
+    fq = make_fastq(tmp_path / "in.fastq")
+    _stdin(monkeypatch, True, answer)
+    _run(fq, tmp_path / "out", [], monkeypatch, mode="full")
+    assert "~3 reads (estimated), ETA ~0h 0m 4s" in capsys.readouterr().err
+    assert (tmp_path / "out" / "calls_foldback_hunter_in.tsv").exists()
+
+
+@pytest.mark.parametrize("answer", ["", "n", "no", "maybe"])
+def test_full_prompt_decline(tmp_path, monkeypatch, answer):
+    fq = make_fastq(tmp_path / "in.fastq")
+    _stdin(monkeypatch, True, answer)
+    with pytest.raises(SystemExit) as exc:
+        _run(fq, tmp_path / "out", [], monkeypatch, mode="full")
+    assert exc.value.code not in (0, None)
+    assert not (tmp_path / "out" / "calls_foldback_hunter_in.tsv").exists()
+
+
+@pytest.mark.parametrize("flag", ["--yes", "-y"])
+def test_full_yes_skips_prompt(tmp_path, monkeypatch, flag):
+    fq = make_fastq(tmp_path / "in.fastq")
+    _stdin(monkeypatch, False)  # non-TTY; would exit without --yes
+    monkeypatch.setattr("builtins.input", lambda prompt="": pytest.fail("prompted"))
+    _run(fq, tmp_path / "out", [flag], monkeypatch, mode="full")
+    assert (tmp_path / "out" / "calls_foldback_hunter_in.tsv").exists()
+
+
+def test_full_non_tty_without_yes_exits(tmp_path, monkeypatch):
+    fq = make_fastq(tmp_path / "in.fastq")
+    _stdin(monkeypatch, False)
+    with pytest.raises(SystemExit) as exc:
+        _run(fq, tmp_path / "out", [], monkeypatch, mode="full")
+    msg = str(exc.value.code)
+    assert "~3 reads (estimated)" in msg and "ETA" in msg and "re-run with --yes" in msg
+    assert not (tmp_path / "out").exists() or not list((tmp_path / "out").iterdir())
+
+
+def test_probe_mode_never_prompts(tmp_path, monkeypatch):
+    fq = make_fastq(tmp_path / "in.fastq")
+    _stdin(monkeypatch, False)
+    _run(fq, tmp_path / "out", [], monkeypatch, mode="probe")
+
+
+def test_gz_count_is_estimated(tmp_path):
+    import gzip
+    fq = make_fastq(tmp_path / "in.fastq")
+    gz = tmp_path / "in.fastq.gz"
+    gz.write_bytes(gzip.compress(fq.read_bytes()))
+    assert rld.count_reads(str(gz), "fastq.gz") == gz.stat().st_size // rld.FASTQ_GZ_BYTES_PER_READ
+
+
+def test_format_eta():
+    assert rld.format_eta(3723) == "1h 2m 3s"

@@ -4,7 +4,12 @@ foldback_hunter: CLI for reference-free foldback read-level detection
 
     python detectors/read_level_detector.py --input <reads.fastq|.fastq.gz|.bam> \
         --outdir results/ \
-        [--processes N | --threads N] [--mode probe|full|seed --max-reads N]
+        [--processes N | --threads N] [--mode probe|full|seed] [--yes]
+
+The whole input is always scored. To subset it, use seqtk sample (FASTQ) or
+samtools view -s (BAM). --mode full asks for confirmation (read count + ETA)
+before scoring; pass --yes/-y to skip the prompt (required when stdin is not
+a TTY).
 
 Writes calls_foldback_hunter_<stem>.tsv (read_id, method, flagged)
 and scores_foldback_hunter_<stem>.tsv (read_id, raw_score,
@@ -136,6 +141,56 @@ def available_cpus():
     return os.cpu_count()
 
 
+FULL_SEC_PER_READ = 1.2  # rough --mode full cost, used for the ETA
+# Rough compressed bytes/read, measured on real HG002 ONT data (mean read length ~17-18 kb):
+#   FASTQ.GZ: hg002_subsample.fastq.gz, 662 MB / 39,729 reads = 16.7 kB.
+#   BAM: ONT open data giab_2025.01 R10 sup calls.sorted.bam (carries MM/ML modbase tags),
+#        8 random 800-read windows = 23.1 kB aligned; same reads stripped to unaligned = 21.4 kB.
+#        Unindexed BAMs are mostly unaligned, so the uBAM figure is used.
+# Shorter reads or BAMs without modbase tags will be smaller per read.
+FASTQ_GZ_BYTES_PER_READ = 16500
+BAM_BYTES_PER_READ = 21000
+
+
+def format_eta(seconds):
+    seconds = int(round(seconds))
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}h {m}m {s}s"
+
+
+def count_reads(path, fmt):
+    """Return an estimated read count. Cheap; see README for caveats."""
+    if fmt == "fastq":
+        with open(path, "rb") as fh:
+            return sum(1 for _ in fh) // 4
+    if fmt == "bam":
+        import pysam
+
+        with pysam.AlignmentFile(path, "rb", check_sq=False) as af:
+            if af.has_index():
+                # idxstats counts secondary/supplementary records too, so this
+                # overestimates the primary reads actually scored.
+                return sum(s.total for s in af.get_index_statistics()) + af.nocoordinate
+    bytes_per_read = BAM_BYTES_PER_READ if fmt == "bam" else FASTQ_GZ_BYTES_PER_READ
+    return os.path.getsize(path) // bytes_per_read
+
+
+def confirm_full_run(path, fmt, assume_yes):
+    """Print read count + ETA for --mode full; exit unless the user confirms."""
+    n = count_reads(path, fmt)
+    count = f"~{n} reads (estimated)"
+    msg = f"[foldback_hunter] --mode full: {count}, ETA ~{format_eta(n * FULL_SEC_PER_READ)} at ~{FULL_SEC_PER_READ} s/read"
+    if assume_yes:
+        print(msg, file=sys.stderr)
+        return
+    if not sys.stdin.isatty():
+        raise SystemExit(f"{msg}\nstdin is not a TTY; re-run with --yes to proceed.")
+    print(msg, file=sys.stderr)
+    if input("Proceed? [y/N] ").strip().lower() not in ("y", "yes"):
+        raise SystemExit("Aborted.")
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -156,8 +211,10 @@ def main():
               "instead for real speedup. Mutually exclusive with --processes. Warns (does not fail) if "
               "above the available CPU count."))
     ap.add_argument("--mode", choices=["probe", "full", "seed"], default="probe")
-    ap.add_argument("--max-reads", type=int, default=None,
-                     help="Cap the number of reads scored. Required when --mode full.")
+    ap.add_argument("-y", "--yes", action="store_true",
+        help="Skip the --mode full confirmation prompt (required if stdin is not a TTY). "
+             "The whole input is always scored; to subset it, use seqtk sample / "
+             "samtools view -s.")
     ap.add_argument("--threshold", type=threshold_type, default=0.8,
         help="Minimum raw_score to flag a read as foldback, range [0,1]. "
              "Default 0.8 matches analysis/plot_Framing_A.py's published "
@@ -165,8 +222,9 @@ def main():
              "without rerunning that analysis.")
     args = ap.parse_args()
 
-    if args.mode == "full" and args.max_reads is None:
-        raise SystemExit("--mode full requires --max-reads: no cap = no run.")
+    fmt = detect_format(args.input)
+    if args.mode == "full":
+        confirm_full_run(args.input, fmt, args.yes)
 
     if args.threads and args.mode == "seed":
         print(
@@ -192,13 +250,10 @@ def main():
     stem = parse_stem(args.input)
     os.makedirs(args.outdir, exist_ok=True)
 
-    fmt = detect_format(args.input)
     if fmt in ("fastq", "fastq.gz"):
         reads = iter_fastq(args.input)
     elif fmt == "bam":
         reads = iter_bam(args.input)
-    if args.max_reads is not None:
-        reads = itertools.islice(reads, args.max_reads)
 
     tasks = ((read_id, seq, args.mode) for read_id, seq in reads)
 
