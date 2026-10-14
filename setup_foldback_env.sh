@@ -30,8 +30,6 @@ conda create -n "${ENV_NAME}" -y -c bioconda -c conda-forge \
     breakinator=1.1.1 \
     seqtk \
     pysam \
-    numba \
-    numpy \
     jupyterlab \
     ipykernel
 
@@ -55,7 +53,6 @@ breakinator --version
 seqtk 2>&1 | head -3 || true
 python -c "import pysam; print('pysam', pysam.__version__)"
 python -c "import edlib; print('edlib OK')"
-python -c "import numba; print('numba', numba.__version__)"
 jupyter kernelspec list
 
 echo "=== Done. Env '${ENV_NAME}' created and kernel registered. ==="

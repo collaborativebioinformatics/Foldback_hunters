@@ -52,9 +52,9 @@ This writes two TSVs and a summary JSON to `results/` (see [schema.md](schema.md
 |---|---|---|
 | `--input` | *(required)* | Input reads: FASTQ (plain or `.gz`) or BAM. Format autodetected from extension. |
 | `--outdir` | `results` | Output directory (created if missing). |
-| `--mode` | `probe` | Scoring mode: `probe` (fast edlib infix search), `full` (parasail Smith-Waterman, slow, ~1.2 s/read — asks for confirmation first, see `--yes`), or `seed` (numba k-mer seed + bounded edlib, good middle ground; requires `numba` + `numpy`, first run compiles the kernel and caches it. |
+| `--mode` | `probe` | Scoring mode: `probe` (fast edlib infix search), `full` (parasail Smith-Waterman, slow, ~1.2 s/read — asks for confirmation first, see `--yes`), or `seed` (k-mer seed + bounded edlib, good middle ground). |
 | `--processes` | `None` | Number of worker processes for parallel scoring. Mutually exclusive with `--threads`. Warns (does not fail) if above the available CPU count. |
-| `--threads` | `None` | Number of threads for parallel scoring (`concurrent.futures.ThreadPoolExecutor`). Recommended for every mode. Mutually exclusive with `--processes`. Warns (does not fail) if above the available CPU count. |
+| `--threads` | `None` | Number of threads for parallel scoring (`concurrent.futures.ThreadPoolExecutor`). Threads well for `--mode full`/`probe` (parasail/edlib release the GIL), but not `--mode seed` (pure-Python k-mer matching loop holds the GIL) — use `--processes` there instead. Mutually exclusive with `--processes`. Warns (does not fail) if above the available CPU count. |
 | `--yes`, `-y` | off | Skip the `--mode full` confirmation prompt. Without it, `--mode full` prints the read count and ETA (~1.2 s/read) and asks `Proceed? [y/N]`; anything but `y`/`yes` aborts with a nonzero exit. If stdin is not a TTY, it exits with that message instead of prompting. |
 
 The whole input is always scored. To subset the input, use `seqtk sample` / `samtools view -s`.
@@ -64,7 +64,7 @@ The whole input is always scored. To subset the input, use `seqtk sample` / `sam
 ```bash
 python detectors/read_level_detector.py \
   --input data/sim_near_end.fastq.gz \
-  --mode seed --threads 4 \
+  --mode seed --processes 8 \
   --outdir results/
 ```
 ```

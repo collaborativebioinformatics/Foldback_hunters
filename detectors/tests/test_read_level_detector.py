@@ -1,7 +1,7 @@
 """
 Unit tests for detectors/read_level_detector.py's CLI: backend equivalence
 (sequential / --processes / --threads), mutual exclusivity of --processes
-and --threads, --mode seed under every backend, and the warn-only
+and --threads, the --threads + --mode seed warn-only behavior, and the warn-only
 oversubscription check.
 """
 
@@ -86,17 +86,17 @@ def test_threads_and_processes_are_mutually_exclusive(tmp_path, monkeypatch, cap
     assert "not allowed with argument" in stderr
 
 
-@pytest.mark.parametrize("extra_args", [["--processes", "2"], ["--threads", "2"]])
-def test_seed_mode_backends_identical_and_no_gil_warning(tmp_path, monkeypatch, capsys, extra_args):
+def test_threads_seed_mode_warns_but_completes(tmp_path, monkeypatch, capsys):
     fastq_path = make_fastq(tmp_path / "in.fastq")
+    outdir = tmp_path / "out"
 
-    _run(fastq_path, tmp_path / "baseline", [], monkeypatch, mode="seed")
-    baseline = _read_tsvs(tmp_path / "baseline", "in")
-    capsys.readouterr()
+    _run(fastq_path, outdir, ["--threads", "2"], monkeypatch, mode="seed")
 
-    _run(fastq_path, tmp_path / "variant", extra_args, monkeypatch, mode="seed")
-    assert _read_tsvs(tmp_path / "variant", "in") == baseline
-    assert "GIL" not in capsys.readouterr().err
+    stderr = capsys.readouterr().err
+    assert "GIL" in stderr
+    assert "--processes" in stderr
+    assert (outdir / "calls_foldback_hunter_in.tsv").exists()
+    assert (outdir / "scores_foldback_hunter_in.tsv").exists()
 
 
 def test_summary_json_written(tmp_path, monkeypatch):

@@ -205,15 +205,16 @@ def main():
     parallel_group = ap.add_mutually_exclusive_group()
     parallel_group.add_argument("--processes", type=int, default=None,
         help=("If set, score reads in parallel with this many worker processes. "
-              "For --mode seed prefer --threads: similar speed, ~5x less memory "
-              "(each worker process holds its own numba runtime, ~130 MiB). "
               "Warns (does not fail) if above the available CPU count."))
     parallel_group.add_argument("--threads", type=int, default=None,
         help=("If set, score reads in parallel with this many threads "
-              "(concurrent.futures.ThreadPoolExecutor). Recommended for all "
-              "modes, including --mode seed (its numba k-mer scan releases "
-              "the GIL). Mutually exclusive with --processes. Warns (does not "
-              "fail) if above the available CPU count."))
+              "(concurrent.futures.ThreadPoolExecutor). Threads well for "
+              "--mode full/probe (parasail/edlib release the GIL); does not "
+              "thread well for --mode seed, whose k-mer matching loop is "
+              "pure Python and holds the GIL — a warning is printed if you "
+              "combine --threads with --mode seed, use --processes there "
+              "instead for real speedup. Mutually exclusive with --processes. Warns (does not fail) if "
+              "above the available CPU count."))
     ap.add_argument("--mode", choices=["probe", "full", "seed"], default="probe")
     ap.add_argument("-y", "--yes", action="store_true",
         help="Skip the --mode full confirmation prompt (required if stdin is not a TTY). "
@@ -230,14 +231,15 @@ def main():
     if args.mode == "full":
         confirm_full_run(args.input, fmt, args.yes)
 
-    if args.mode == "seed":
-        # load the numba cache here before workers spawn.
-        try:
-            import seed_candidates
-        except ImportError as e:
-            raise SystemExit(
-                f"--mode seed requires numba and numpy ({e}); "
-                "pip install -r requirements.txt")
+    if args.threads and args.mode == "seed":
+        print(
+            "[foldback_hunter] WARNING: --threads with --mode seed will not "
+            "scale — seed mode's k-mer matching loop is pure Python and "
+            "holds the GIL, so threads serialize on it (edlib's own GIL "
+            "release inside that loop doesn't help). Use --processes for "
+            "real speedup in seed mode. Continuing anyway.",
+            file=sys.stderr,
+        )
 
     requested = args.processes or args.threads  # mutually exclusive
     ncpu = available_cpus()

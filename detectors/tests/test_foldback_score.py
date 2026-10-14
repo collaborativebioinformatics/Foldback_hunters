@@ -8,11 +8,8 @@ of sim/simulate_foldbacks_v2.py.
 
 import random
 
-import foldback_score
 import pytest
 from foldback_score import (
-    find_candidate,
-    find_candidate_py,
     ScoreResult,
     revcomp,
     score_read_full,
@@ -160,34 +157,3 @@ def test_n_base_probe_no_special_casing():
     result = score_read_probe("n2", mutated, probe_lengths=(50,), min_len=10)
     assert result.status == "scored"
     assert result.raw_score == pytest.approx(49 / 50)
-
-
-# ---------------------------------------------------------------------------
-# seed mode: numba candidate finder agrees with the pure-Python scan
-# ---------------------------------------------------------------------------
-
-def _seed_agreement_reads():
-    rng = random.Random(7)
-    unrelated = "".join(rng.choice("ACGT") for _ in range(3000))
-    foldback, _t = make_foldback_read(3000, 2200, seed=3)
-    with_n = foldback[:100] + "N" * 20 + foldback[120:]   # N-N matches count, as in py
-    lower = foldback.lower()                              # non-ACGTN -> py fallback
-    iupac = foldback[:500] + "R" + foldback[501:]         # non-ACGTN -> py fallback
-    return {
-        "unrelated": unrelated, "foldback": foldback, "with_n": with_n,
-        "lower": lower, "iupac": iupac, "short": foldback[:20],
-    }
-
-
-@pytest.mark.parametrize("name", ["unrelated", "foldback", "with_n", "lower", "iupac", "short"])
-def test_numba_candidate_matches_python(name):
-    seq = _seed_agreement_reads()[name]
-    assert find_candidate(seq, 13) == find_candidate_py(seq, 13)
-
-
-@pytest.mark.parametrize("name", ["unrelated", "foldback", "with_n", "lower", "iupac"])
-def test_seed_score_matches_python_path(name, monkeypatch):
-    seq = _seed_agreement_reads()[name]
-    nb = score_read_seed(name, seq, min_len=1000)
-    monkeypatch.setattr(foldback_score, "find_candidate", find_candidate_py)
-    assert score_read_seed(name, seq, min_len=1000) == nb

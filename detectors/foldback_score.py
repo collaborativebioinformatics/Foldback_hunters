@@ -6,7 +6,7 @@ Signature: read ~= forward_part + RC(segment_near_fold).
 Three modes:
   - probe: edlib infix search of RC(tail) within the read.
   - full:  parasail Smith-Waterman of read vs RC(read).
-  - seed:  (numba) k-mer seed match (sparse dict from RC(read) vs. dense scan of read) to find a candidate junction, 
+  - seed:  k-mer seed match (sparse dict from RC(read) vs. dense scan of read) to find a candidate junction, 
            verified with a bounded edlib HW call around that candidate.
 """
 
@@ -22,7 +22,6 @@ PROBE_LENGTHS = (50, 150, 500, 1500)
 MIN_LEN = 1000
 SEED_K = 13
 SEED_WINDOW = 500
-MAX_NUMBA_K = 27  # 5**27 < 2**63: largest k whose base-5 key fits int64
 
 # EMBOSS/dnafull-style gap penalties for full mode
 # future work: tune them for real ONT sequencing reads
@@ -104,56 +103,35 @@ def score_read_full(read_id, seq, min_len=MIN_LEN) -> ScoreResult:
     return ScoreResult(read_id, identity, fold_position_bp, "scored")
 
 
-def find_candidate_py(seq, k):
-    """Pure-Python candidate search: (i, q) or (-1, -1).
-
-    Sparse dict of RC(read) k-mers (stride k) scanned against every read
-    position: for read = A + RC(B), fold point p = len(A), a match at
-    read[i:i+k] == RC(read)[q:q+k] implies p = (i + n - q) // 2. Striding
-    both sides would hit iff i - q is a multiple of k.
-    """
-    n = len(seq)
-    seq_rc = revcomp(seq)
-    rc_kmers = {}
-    for q in range(0, n - k + 1, k):
-        kmer = seq_rc[q:q + k]
-        if kmer not in rc_kmers:
-            rc_kmers[kmer] = q
-    for i in range(0, n - k + 1):
-        q = rc_kmers.get(seq[i:i + k])
-        if q is not None:
-            return i, q
-    return -1, -1
-
-
-def find_candidate(seq, k):
-    """numba candidate search (identical result to find_candidate_py).
-
-    seed_candidates is imported lazily so probe/full do not need numba; the
-    import warms up the kernel. Reads with non-ACGTN characters, or k too large
-    for int64 base-5 keys, use the pure-Python scan.
-    """
-    import seed_candidates
-
-    codes = seed_candidates.encode(seq) if k <= MAX_NUMBA_K else None
-    if codes is None:
-        return find_candidate_py(seq, k)
-    i, q = seed_candidates.find_candidate_codes(codes, k)
-    return int(i), int(q)
-
-
 def score_read_seed(read_id, seq, k=SEED_K, window=SEED_WINDOW, min_len=MIN_LEN) -> ScoreResult:
     if len(seq) < min_len:
         return ScoreResult(read_id, None, None, "too_short")
 
     n = len(seq)
+    seq_rc = revcomp(seq)
+
     if n < k:
         return ScoreResult(read_id, 0.0, None, "no_alignment")
 
-    i, q = find_candidate(seq, k)
-    if i < 0:
+    # Sparse dict of RC(read) k-mers (stride k) scanned against every read
+    # position: for read = A + RC(B), fold point p = len(A), a match at
+    # read[i:i+k] == RC(read)[q:q+k] implies p = (i + n - q) // 2. Striding
+    # both sides would only hit when i - q is a multiple of k.
+    rc_kmers = {}
+    for q in range(0, n - k + 1, k):
+        kmer = seq_rc[q:q + k]
+        if kmer not in rc_kmers:
+            rc_kmers[kmer] = q
+
+    candidate_p = None
+    for i in range(0, n - k + 1):
+        q = rc_kmers.get(seq[i:i + k])
+        if q is not None:
+            candidate_p = (i + n - q) // 2
+            break
+
+    if candidate_p is None:
         return ScoreResult(read_id, 0.0, None, "no_alignment")
-    candidate_p = (i + n - q) // 2
 
     a_start = max(0, candidate_p - window)
     query = seq[a_start:candidate_p]
