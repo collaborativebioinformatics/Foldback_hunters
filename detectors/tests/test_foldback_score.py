@@ -56,12 +56,7 @@ def test_probe_position_exact(L, p):
 @pytest.mark.parametrize("L,p", [
     (5000, 2500),
     (5000, 3750),
-    pytest.param(5000, 4850, marks=pytest.mark.xfail(
-        reason="Real finding: for small t (near_end reads), a longer/gappier "
-               "chance alignment in the random background can out-score the "
-               "true fold signal in full mode's max-score search.",
-        strict=True,
-    )),
+    (5000, 4850),   # near_end: t=150
 ])
 def test_full_position_exact(L, p):
     read, _t = make_foldback_read(L, p, seed=5)
@@ -109,12 +104,6 @@ def test_seed_no_match_unrelated_sequence():
     assert result.status == "no_alignment" or (result.raw_score or 0.0) < 0.5
 
 
-@pytest.mark.xfail(
-    reason="Real finding: for small t (near_end reads), the fixed +/-500bp "
-           "verify window includes far more flanking background than the "
-           "true arm, which corrupts edlib's HW location refinement.",
-    strict=True,
-)
 def test_seed_position_near_end():
     read, t = make_foldback_read(5000, 4850, seed=1)
     assert t == 150

@@ -23,10 +23,14 @@ MIN_LEN = 1000
 SEED_K = 13
 SEED_WINDOW = 500
 
-# EMBOSS/dnafull-style gap penalties for full mode
+# Gap penalties for full mode
+# GAP_EXTEND must be high enough that SW on random DNA is subcritical: 
+# with dnafull (+5/-4) and extend=1, gapped chance alignments
+# have positive drift and grow to near-global length out-scoring a short true fold. 
+# At extend=10 background local scores are ~150-200.
 # future work: tune them for real ONT sequencing reads
 GAP_OPEN = 10
-GAP_EXTEND = 1
+GAP_EXTEND = 10
 
 
 def revcomp(seq: str) -> str:
@@ -133,13 +137,13 @@ def score_read_seed(read_id, seq, k=SEED_K, window=SEED_WINDOW, min_len=MIN_LEN)
     if candidate_p is None:
         return ScoreResult(read_id, 0.0, None, "no_alignment")
 
-    a_start = max(0, candidate_p - window)
-    query = seq[a_start:candidate_p]
-    if not query:
+    # The mirrored arm can be at most min(candidate_p, n - candidate_p) long
+    half = min(window, candidate_p, n - candidate_p)
+    if half <= 0:
         return ScoreResult(read_id, 0.0, None, "no_alignment")
-
-    t_start = max(0, candidate_p - window)
-    t_end = min(n, candidate_p + window)
+    t_start = candidate_p - half
+    t_end = candidate_p + half
+    query = seq[t_start:candidate_p]
     region = seq[t_start:t_end]
     target = revcomp(region)
 
