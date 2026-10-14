@@ -6,6 +6,8 @@ dependencies:
   - python=3.10
   - parasail-python
   - pysam
+  - numba
+  - numpy
   - pytest
   - pip
   - pip:

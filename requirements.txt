@@ -2,3 +2,5 @@ edlib
 parasail
 pysam
 pytest
+numba
+numpy
