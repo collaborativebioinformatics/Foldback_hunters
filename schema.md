@@ -23,7 +23,7 @@ One row per read per method. Each baseline and each detector writes its own file
 | Column | Type | Meaning |
 |---|---|---|
 | `read_id` | string | Must match `read_id` in the truth table exactly. This is the join key. |
-| `method` | string | Name of the tool or detector. Use one of: `breakinator`, `yacrd`, `duplex_tools`, `sniffles2_no_filter`, `sniffles2_with_filter`, `read_level_detector`. Add new methods to this list here before using them. |
+| `method` | string | Name of the tool or detector. Use one of: `breakinator`, `yacrd`, `duplex_tools`, `sniffles2_no_filter`, `sniffles2_with_filter`, `foldback_hunter` (formerly `read_level_detector`). Add new methods to this list here before using them. |
 | `flagged` | boolean or float | Did this method flag the read as a foldback? Either `True`/`False`, or a numeric score that can be thresholded downstream. Be consistent within a single file. |
 
 **File format:** TSV, one file per method per condition, header row required. Filename convention: `calls_<method>_<condition>.tsv`.

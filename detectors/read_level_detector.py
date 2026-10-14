@@ -294,7 +294,7 @@ def main():
             raw_score = "" if r.raw_score is None else r.raw_score
             fold_pos = "" if r.fold_position_bp is None else r.fold_position_bp
             flagged = r.raw_score is not None and r.raw_score >= args.threshold
-            calls_writer.writerow([r.read_id, "read_level_detector", flagged])
+            calls_writer.writerow([r.read_id, "foldback_hunter", flagged])
             scores_writer.writerow([r.read_id, raw_score, fold_pos, r.status])
             total_reads += 1
             flagged_reads += flagged
