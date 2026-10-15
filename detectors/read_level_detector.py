@@ -71,6 +71,10 @@ def iter_bam(path):
             yield rec.query_name, seq.upper()
 
 
+def stored_fold_position(fold_position_bp, seq_len, is_reverse):
+    return seq_len - fold_position_bp if is_reverse else fold_position_bp
+
+
 def parse_stem(fastq_path):
     basename = os.path.basename(fastq_path)
     if basename.endswith(".gz"):

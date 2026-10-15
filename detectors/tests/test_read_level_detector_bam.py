@@ -11,7 +11,7 @@ import sys
 import pysam
 import pytest
 import read_level_detector as rld
-from foldback_score import revcomp
+from foldback_score import revcomp, score_read
 from test_read_level_detector import make_foldback_read
 
 
@@ -169,3 +169,36 @@ def test_main_smoke_test_on_unaligned_bam(tmp_path, monkeypatch):
     assert (outdir / "calls_foldback_hunter_in.tsv").exists()
     assert (outdir / "scores_foldback_hunter_in.tsv").exists()
     assert (outdir / "summary_foldback_hunter_in.json").exists()
+
+
+def test_stored_fold_position_maps_reverse_strand_to_bam_seq(tmp_path):
+    """fold_position_bp is in original-read orientation; for a flag-16 record
+    the stored SEQ is the revcomp, so the cut moves to len - p."""
+    L, p = 2000, 1200
+    orig = make_foldback_read(L, p, seed=5)
+    header = pysam.AlignmentHeader.from_dict({
+        "HD": {"VN": "1.6"}, "SQ": [{"SN": "chr1", "LN": 10000}],
+    })
+    bam_path = tmp_path / "rev.bam"
+    with pysam.AlignmentFile(bam_path, "wb", header=header) as af:
+        rec = pysam.AlignedSegment(header)
+        rec.query_name = "rev"
+        rec.query_sequence = revcomp(orig)
+        rec.flag = 16
+        rec.reference_id = 0
+        rec.reference_start = 0
+        rec.cigarstring = f"{L}M"
+        af.write(rec)
+
+    (read_id, seq), = rld.iter_bam(str(bam_path))
+    detected = score_read(read_id, seq, mode="probe").fold_position_bp
+    assert detected == p
+
+    with pysam.AlignmentFile(bam_path, "rb") as af:
+        stored = next(iter(af)).query_sequence
+    cut = rld.stored_fold_position(detected, len(stored), True)
+    assert cut == L - p
+    # Both stored segments are the revcomp of the original segments, swapped.
+    assert stored[:cut] == revcomp(orig[p:])
+    assert stored[cut:] == revcomp(orig[:p])
+    assert rld.stored_fold_position(detected, L, False) == p
