@@ -17,7 +17,9 @@ fold_position_bp, status). flagged is a boolean: raw_score >= --threshold
 (default 0.8). <stem> is the input filename stem (e.g. foo.fastq.gz -> foo,
 foo.bam -> foo).
 
-Optional read output : --output <reads.fastq[.gz]>
+Optional read output : --output <reads.fastq[.gz]> (FASTQ or BAM input; BAM
+input is written as FASTQ and its tags/alignment are dropped, only fb:i:N is
+kept; records without qualities get '!' placeholders)
 with --action {tag,clip,filter,split} (default tag). Every emitted record
 gets " fb:i:1" (flagged) or " fb:i:0" appended to its header. clip keeps the
 longer side of the fold; split emits <id>_1 / <id>_2; filter drops flagged reads. clip/split cut at the
@@ -63,7 +65,9 @@ def iter_fastq(path):
 
 
 def iter_bam(path):
-    """Yield (read_id, seq) from a BAM (aligned or unaligned), primary records only."""
+    """Yield (read_id, seq, qual, "") from a BAM (aligned or unaligned),
+    primary records only, in original read orientation. 
+    qual is None when the record has no qualities."""
     import pysam  # deferred: only needed for BAM input, keeps FASTQ path pysam-free
 
     with pysam.AlignmentFile(path, "rb", check_sq=False) as af:
@@ -73,9 +77,13 @@ def iter_bam(path):
             seq = rec.query_sequence
             if seq is None:
                 continue
+            quals = rec.query_qualities
+            qual = pysam.qualities_to_qualitystring(quals) if quals is not None else None
             if rec.is_reverse:
                 seq = revcomp(seq)
-            yield rec.query_name, seq.upper()
+                if qual is not None:
+                    qual = qual[::-1]
+            yield rec.query_name, seq.upper(), qual, ""
 
 
 def stored_fold_position(fold_position_bp, seq_len, is_reverse):
@@ -108,15 +116,12 @@ def detect_format(path):
 def resolve_output_format(output, output_format, in_fmt):
     if output_format == "bam":
         raise ValueError("--output-format bam is not yet supported")
-    if in_fmt == "bam":
-        raise ValueError("BAM input with --output is not yet supported "
-                         "(planned: Phase 02); use FASTQ input")
     ext_fmt = "fastq.gz" if output.endswith(".gz") else None
     if output_format == "fastq" and ext_fmt:
         raise ValueError(f"--output-format fastq contradicts --output extension {output!r}")
     if output_format == "fastq.gz" and not ext_fmt:
         raise ValueError(f"--output-format fastq.gz contradicts --output extension {output!r}")
-    return output_format or ext_fmt or in_fmt
+    return output_format or ext_fmt or ("fastq" if in_fmt == "bam" else in_fmt)
 
 
 def format_fastq_record(rid, comment, seq, qual, tag):
@@ -277,7 +282,9 @@ def main():
              "9-condition benchmark threshold — do not change the default "
              "without rerunning that analysis.")
     ap.add_argument("--output", default=None,
-        help="Write reads to this FASTQ (.gz by extension). FASTQ input only. "
+        help="Write reads to this FASTQ/.gz. Accepts FASTQ or BAM "
+             "input; BAM tags/alignment are dropped (only fb:i:N is kept) and "
+             "records without qualities get '!' placeholders. "
              "Without it only the TSVs/summary are written.")
     ap.add_argument("--output-format", choices=["fastq", "fastq.gz", "bam"], default=None,
         help="Output read format. Default: from the --output extension, else the "
@@ -336,13 +343,23 @@ def main():
     if fmt in ("fastq", "fastq.gz"):
         reads = iter_fastq(args.input)
     elif fmt == "bam":
-        reads = ((rid, seq, None, "") for rid, seq in iter_bam(args.input))
+        reads = iter_bam(args.input)
 
     pending = deque()  # records awaiting their result; bounded by _ordered_bounded
 
+    warned_no_qual = False
+
     def _tasks():
+        nonlocal warned_no_qual
         for rec in reads:
             if args.output:
+                if rec[2] is None:
+                    if not warned_no_qual:
+                        print("[foldback_hunter] WARNING: BAM record(s) without "
+                              "qualities; writing '!' (Q0) placeholder",
+                              file=sys.stderr)
+                        warned_no_qual = True
+                    rec = (rec[0], rec[1], "!" * len(rec[1]), rec[3])
                 pending.append(rec)
             yield rec[0], rec[1].upper(), args.mode
 

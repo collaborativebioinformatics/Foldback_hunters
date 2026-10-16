@@ -79,7 +79,7 @@ def test_iter_bam_skips_supplementary(tmp_path):
     bam_path = tmp_path / "aligned.bam"
     make_aligned_bam(bam_path)
 
-    read_ids = [read_id for read_id, _seq in rld.iter_bam(str(bam_path))]
+    read_ids = [rec[0] for rec in rld.iter_bam(str(bam_path))]
 
     assert read_ids == ["fwd_read", "rev_read"]
 
@@ -88,7 +88,7 @@ def test_iter_bam_revcomps_reverse_strand(tmp_path):
     bam_path = tmp_path / "aligned.bam"
     rev_seq_in_bam = make_aligned_bam(bam_path)
 
-    reads = dict(rld.iter_bam(str(bam_path)))
+    reads = {r[0]: r[1] for r in rld.iter_bam(str(bam_path))}
 
     assert reads["rev_read"] == revcomp(rev_seq_in_bam).upper()
 
@@ -190,7 +190,7 @@ def test_stored_fold_position_maps_reverse_strand_to_bam_seq(tmp_path):
         rec.cigarstring = f"{L}M"
         af.write(rec)
 
-    (read_id, seq), = rld.iter_bam(str(bam_path))
+    (read_id, seq, _qual, _rest), = rld.iter_bam(str(bam_path))
     detected = score_read(read_id, seq, mode="probe").fold_position_bp
     assert detected == p
 
@@ -202,3 +202,122 @@ def test_stored_fold_position_maps_reverse_strand_to_bam_seq(tmp_path):
     assert stored[:cut] == revcomp(orig[p:])
     assert stored[cut:] == revcomp(orig[:p])
     assert rld.stored_fold_position(detected, L, False) == p
+
+
+# ---- BAM -> FASTQ output ----
+
+import gzip
+
+from test_read_level_detector import _parse, _run
+
+
+def _qual_for(n):
+    return "".join(chr(33 + (i % 40)) for i in range(n))
+
+
+def _write_bam(path, records, aligned=True, tags=None):
+    """records: (name, stored_seq, stored_qual_or_None, is_reverse)."""
+    hd = {"HD": {"VN": "1.6"}}
+    if aligned:
+        hd["SQ"] = [{"SN": "chr1", "LN": 100000}]
+    header = pysam.AlignmentHeader.from_dict(hd)
+    with pysam.AlignmentFile(path, "wb", header=header) as af:
+        for i, (name, seq, qual, rev) in enumerate(records):
+            rec = pysam.AlignedSegment(header)
+            rec.query_name = name
+            rec.query_sequence = seq
+            if qual is not None:
+                rec.query_qualities = pysam.qualitystring_to_array(qual)
+            if aligned:
+                rec.flag = 16 if rev else 0
+                rec.reference_id = 0
+                rec.reference_start = i * 5000
+                rec.mapping_quality = 60
+                rec.cigarstring = f"{len(seq)}M"
+            else:
+                rec.flag = 4
+            if tags:
+                for k, v in tags.items():
+                    rec.set_tag(k, v)
+            af.write(rec)
+
+
+def _fold_records(reverse_second=True):
+    r1 = make_foldback_read(2000, 1000, seed=1)
+    r2 = make_foldback_read(2000, 1500, seed=2)
+    r3 = "".join(random.Random(3).choice("ACGT") for _ in range(2000))
+    q = _qual_for(2000)
+    return [("r1", r1, q, False), ("r2", r2, q, False), ("r3", r3, q, False)]
+
+
+def _fastq_of(path, recs):
+    with open(path, "w") as fh:
+        for name, seq, qual, _ in recs:
+            fh.write(f"@{name}\n{seq}\n+\n{qual}\n")
+    return path
+
+
+@pytest.mark.parametrize("aligned", [False, True])
+@pytest.mark.parametrize("ext", ["fastq", "fastq.gz"])
+@pytest.mark.parametrize("action", ["tag", "clip", "filter", "split"])
+def test_bam_to_fastq_matches_fastq_input(tmp_path, monkeypatch, aligned, ext, action):
+    recs = _fold_records()
+    # store r2 reverse-complemented on the reverse strand, as an aligner would
+    stored = list(recs)
+    if aligned:
+        n, s, q, _ = recs[1]
+        stored[1] = (n, revcomp(s), q[::-1], True)
+    bam = tmp_path / "in.bam"
+    _write_bam(bam, stored, aligned=aligned)
+    fq = _fastq_of(tmp_path / "in.fastq", recs)
+
+    out_b = tmp_path / f"b.{ext}"
+    out_f = tmp_path / f"f.{ext}"
+    _run(bam, tmp_path / "ob", ["--output", str(out_b), "--action", action], monkeypatch)
+    _run(fq, tmp_path / "of", ["--output", str(out_f), "--action", action], monkeypatch)
+
+    assert _parse(out_b) == _parse(out_f)
+    if action == "split":
+        assert any(r[0].split()[0].endswith("_1") for r in _parse(out_b))
+
+
+def test_bam_reverse_strand_qual_is_reversed(tmp_path, monkeypatch):
+    orig = make_foldback_read(2000, 1000, seed=1)
+    qual = _qual_for(2000)  # asymmetric
+    bam = tmp_path / "rev.bam"
+    _write_bam(bam, [("rv", revcomp(orig), qual[::-1], True)])
+    out = tmp_path / "o.fastq"
+    _run(bam, tmp_path / "od", ["--output", str(out), "--action", "tag"], monkeypatch)
+    (rid, seq, q), = _parse(out)
+    assert seq == orig and q == qual
+
+
+def test_bam_header_only_fb_tag(tmp_path, monkeypatch):
+    bam = tmp_path / "in.bam"
+    _write_bam(bam, _fold_records(), tags={"RG": "grp", "MM": "C+m,0;", "NM": 3})
+    out = tmp_path / "o.fastq"
+    _run(bam, tmp_path / "od", ["--output", str(out)], monkeypatch)
+    headers = [l for l in out.read_text().splitlines()[::4]]
+    assert all(h.split(" ", 1)[1] in ("fb:i:0", "fb:i:1") for h in headers)
+    assert len(headers) == 3
+
+
+def test_bam_missing_qual_uses_placeholder(tmp_path, monkeypatch, capsys):
+    recs = _fold_records()
+    recs[2] = ("r3", recs[2][1], None, False)
+    bam = tmp_path / "in.bam"
+    _write_bam(bam, recs, aligned=False)
+    out = tmp_path / "o.fastq"
+    _run(bam, tmp_path / "od", ["--output", str(out)], monkeypatch)
+    parsed = {r[0].split()[0]: r for r in _parse(out)}
+    assert parsed["r3"][2] == "!" * 2000
+    err = capsys.readouterr().err
+    assert err.count("without qualities") == 1
+
+
+def test_bam_output_skips_supplementary(tmp_path, monkeypatch):
+    bam = tmp_path / "aligned.bam"
+    make_aligned_bam(bam)
+    out = tmp_path / "o.fastq"
+    _run(bam, tmp_path / "od", ["--output", str(out)], monkeypatch)
+    assert [r[0].split()[0] for r in _parse(out)] == ["fwd_read", "rev_read"]
