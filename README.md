@@ -56,9 +56,27 @@ This writes two TSVs and a summary JSON to `results/` (see [schema.md](schema.md
 | `--processes` | `None` | Number of worker processes for parallel scoring. Mutually exclusive with `--threads`. Warns (does not fail) if above the available CPU count. |
 | `--threads` | `None` | Number of threads for parallel scoring (`concurrent.futures.ThreadPoolExecutor`). Threads well for `--mode full`/`probe` (parasail/edlib release the GIL), but not `--mode seed` (pure-Python k-mer matching loop holds the GIL) — use `--processes` there instead. Mutually exclusive with `--processes`. Warns (does not fail) if above the available CPU count. |
 | `--yes`, `-y` | off | Skip the `--mode full` confirmation prompt. Without it, `--mode full` prints the read count and ETA (~1.2 s/read) and asks `Proceed? [y/N]`; anything but `y`/`yes` aborts with a nonzero exit. If stdin is not a TTY, it exits with that message instead of prompting. |
-| `--output` | `None` | Also write reads to this FASTQ or FASTA; must differ from `--input`. Accepts FASTQ, FASTA or BAM input. For BAM input, original tags and alignment info are dropped and only `fb:i:N` is kept in the header; records without qualities are written with a `!` (Q0) placeholder. Without `--output` only the TSVs and summary are written. |
-| `--output-format` | from `--output` extension, else `fastq` | `fastq`, `fastq.gz`, `fasta` or `fasta.gz`; errors if it contradicts the `--output` extension (gzip or FASTA/FASTQ family). |
+| `--output` | `None` | Also write reads to this file (FASTQ, FASTA or unmapped BAM; format from extension or `--output-format`). Must differ from `--input`. Without `--output` only the TSVs and summary are written. See [Input/output format combinations](#inputoutput-format-combinations). |
+| `--output-format` | from `--output` extension, else `fastq` | `fastq`, `fastq.gz`, `fasta`, `fasta.gz` or `bam`; a `.bam` extension infers `bam`. Errors if it contradicts the `--output` extension. |
 | `--action` | `tag` | Requires `--output`. `tag`: append `fb:i:1`/`fb:i:0` to every header (after any existing comment). `clip`: flagged reads keep the longer side of the fold (tie keeps the first half), quals sliced identically. `filter`: drop flagged reads. `split`: flagged reads become `<id>_1` (`[:p]`) and `<id>_2` (`[p:]`), both `fb:i:1`. Unflagged reads pass through unchanged (`fb:i:0`). The summary JSON reflects `action` output. |
+
+### Input/output format combinations
+
+Applies when `--output` is given.
+
+| Input format | Output format | Note |
+|---|---|---|
+| FASTQ / FASTQ.gz | FASTQ / FASTQ.gz | Header comments are kept; `--action tag` appends `fb:i:N` after any existing comment. |
+| FASTQ / FASTQ.gz | FASTA / FASTA.gz | Qualities are dropped. |
+| FASTQ / FASTQ.gz | BAM | Unmapped BAM (flag 4, `@HD`/`@PG` header, no `@SQ`) with an `fb:i:N` tag; FASTQ header comments are dropped. |
+| FASTA / FASTA.gz | FASTA / FASTA.gz | Only FASTA or BAM output is allowed for FASTA input. |
+| FASTA / FASTA.gz | BAM | No qualities are stored. |
+| FASTA / FASTA.gz | FASTQ | Not supported: FASTA has no qualities (error). |
+| BAM | FASTQ / FASTQ.gz | Original tags and alignment info are dropped; only `fb:i:N` is kept in the header. Records without qualities get a `!` (Q0) placeholder. |
+| BAM | FASTA / FASTA.gz | Original tags and alignment info are dropped; only `fb:i:N` is kept in the header. Qualities are dropped. |
+| BAM | BAM | Not yet supported (error). |
+
+BAM output is never gzipped.
 
 The whole input is always scored. To subset the input, use `seqtk sample` / `samtools view -s`.
 

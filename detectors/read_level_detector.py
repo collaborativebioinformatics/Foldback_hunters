@@ -143,13 +143,15 @@ def detect_format(path):
 
 
 def resolve_output_format(output, output_format, in_fmt):
-    if output_format == "bam":
-        raise ValueError("--output-format bam is not yet supported")
     gz = output.lower().endswith(".gz")
     base = output.lower().removesuffix(".gz")
     ext_family = ("fasta" if base.endswith(FASTA_EXTS)
-                  else "fastq" if base.endswith((".fastq", ".fq")) else None)
-    if output_format and output_format.endswith(".gz") != gz:
+                  else "fastq" if base.endswith((".fastq", ".fq"))
+                  else "bam" if base.endswith(".bam") else None)
+    if output_format == "bam" or ext_family == "bam":
+        if gz:
+            raise ValueError("BAM output cannot be .gz")
+    elif output_format and output_format.endswith(".gz") != gz:
         raise ValueError(f"--output-format {output_format} contradicts --output extension {output!r}")
     if output_format and ext_family and not output_format.startswith(ext_family):
         raise ValueError(f"--output-format {output_format} contradicts --output extension {output!r}")
@@ -161,9 +163,37 @@ def resolve_output_format(output, output_format, in_fmt):
         fmt = "fastq.gz"
     else:
         fmt = "fastq" if in_fmt == "bam" else in_fmt
+    if in_fmt == "bam" and fmt == "bam":
+        raise ValueError("BAM->BAM output is not yet supported (Phase 04/05)")
     if in_fmt.startswith("fasta") and fmt.startswith("fastq"):
-        raise ValueError("FASTA input has no qualities; use a FASTA output (--output-format fasta[.gz])")
+        raise ValueError("FASTA input has no qualities; use a FASTA or BAM output (--output-format fasta[.gz]|bam)")
     return fmt
+
+
+def open_bam_writer(path, argv):
+    """Unmapped-BAM writer: @HD SO:unknown + @PG with the command line, no @SQ."""
+    import pysam  # deferred, like iter_bam
+
+    header = {"HD": {"VN": "1.6", "SO": "unknown"},
+              "PG": [{"ID": "foldback_hunter", "PN": "foldback_hunter",
+                      "CL": " ".join(argv)}]}
+    return pysam.AlignmentFile(path, "wb", header=header)
+
+
+def make_bam_record(header, rid, seq, qual, tag):
+    import pysam
+
+    a = pysam.AlignedSegment(header)
+    a.query_name = rid
+    a.flag = 4
+    a.reference_id = -1
+    a.reference_start = -1
+    a.mapping_quality = 0
+    a.query_sequence = seq  # must precede qualities: setting seq clears them
+    if qual is not None:
+        a.query_qualities = pysam.qualitystring_to_array(qual)
+    a.set_tag("fb", int(tag.rsplit(":", 1)[1]), value_type="i")
+    return a
 
 
 def format_fastq_record(rid, comment, seq, qual, tag):
@@ -339,12 +369,14 @@ def main():
              "9-condition benchmark threshold — do not change the default "
              "without rerunning that analysis.")
     ap.add_argument("--output", default=None,
-        help="Write reads to this FASTQ/FASTA (.gz ok). FASTA output drops qualities "
-             "(needed for FASTA input). BAM input: tags/alignment dropped, only fb:i:N kept. "
+        help="Write reads to this FASTQ/FASTA (.gz ok) or unmapped BAM (.bam). FASTA output "
+             "drops qualities (needed for FASTA input; FASTA->BAM stores none). BAM input: "
+             "tags/alignment dropped, only fb:i:N kept. FASTQ header comments are dropped in "
+             "BAM output. BAM->BAM is not yet supported. "
              "Without it only the TSVs/summary are written.")
     ap.add_argument("--output-format", choices=["fastq", "fastq.gz", "fasta", "fasta.gz", "bam"], default=None,
         help="Output read format. Default: from the --output extension, else the "
-             "input format. bam is not yet supported.")
+             "input format (.bam extension infers bam).")
     ap.add_argument("--action", choices=["tag", "clip", "filter", "split"], default=None,
         help="What to do with reads written to --output (default tag): tag appends "
              "fb:i:1|0 to the header; clip keeps the longer side of the fold; "
@@ -437,7 +469,21 @@ def main():
     with open(calls_path, "w", newline="") as calls_fh, \
          open(scores_path, "w", newline="") as scores_fh, \
          ExitStack() as stack:
-        out_fh = stack.enter_context(open_maybe_gz(args.output, "wt")) if args.output else None
+        out_fh = None
+        if args.output and out_fmt == "bam":
+            out_fh = stack.enter_context(open_bam_writer(args.output, sys.argv))
+            bam_header = out_fh.header
+
+            def emit(rid, comment, seq, qual, tag):
+                out_fh.write(make_bam_record(bam_header, rid, seq, qual, tag))
+        elif args.output:
+            out_fh = stack.enter_context(open_maybe_gz(args.output, "wt"))
+            if out_fmt.startswith("fasta"):
+                def emit(rid, comment, seq, qual, tag):
+                    out_fh.write(format_fasta_record(rid, comment, seq, tag))
+            else:
+                def emit(rid, comment, seq, qual, tag):
+                    out_fh.write(format_fastq_record(rid, comment, seq, qual, tag))
         if args.processes:
             pool = stack.enter_context(Pool(args.processes))
             results = _ordered_bounded(
@@ -466,8 +512,7 @@ def main():
             if out_fh:
                 rec = pending.popleft()
                 for rid, seq, qual, tag in apply_action(action, rec, flagged, r.fold_position_bp):
-                    out_fh.write(format_fasta_record(rid, rec[3], seq, tag) if out_fmt.startswith("fasta")
-                                 else format_fastq_record(rid, rec[3], seq, qual, tag))
+                    emit(rid, rec[3], seq, qual, tag)
                 if flagged and (action == "filter"
                                 or (action in ("clip", "split") and r.fold_position_bp is not None)):
                     acted_reads += 1
