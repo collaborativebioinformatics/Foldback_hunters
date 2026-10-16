@@ -1,4 +1,4 @@
-"""Tests for unmapped-BAM output (Phase 03) in detectors/read_level_detector.py."""
+"""Tests for unmapped-BAM output in detectors/read_level_detector.py."""
 
 import random
 

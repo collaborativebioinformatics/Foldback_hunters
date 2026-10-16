@@ -1,4 +1,4 @@
-"""Tests for uBAM -> uBAM (Phase 04) in detectors/read_level_detector.py."""
+"""Tests for uBAM -> uBAM in detectors/read_level_detector.py."""
 
 import array
 import random
@@ -89,7 +89,7 @@ def test_aligned_errors_before_output(tmp_path, monkeypatch, kw, action):
     bam = tmp_path / "al.bam"
     _write_ubam(bam, [("a", "ACGT" * 100, "I" * 400)], **kw)
     out = tmp_path / "out.bam"
-    with pytest.raises(SystemExit, match="Phase 05"):
+    with pytest.raises(SystemExit, match="aligned BAM -> BAM is not supported"):
         _run(bam, tmp_path / "o", ["--output", str(out), "--action", action], monkeypatch)
     if "with_sq" in kw:
         assert not out.exists()

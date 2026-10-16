@@ -89,7 +89,7 @@ def iter_fasta(path):
         yield rec(header, parts)
 
 
-ALIGNED_BAM_MSG = ("aligned BAM -> BAM is not supported yet (Phase 05); "
+ALIGNED_BAM_MSG = ("aligned BAM -> BAM is not supported; "
                    "use FASTQ/FASTA output or an unmapped BAM")
 
 

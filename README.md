@@ -75,7 +75,7 @@ Applies when `--output` is given.
 | BAM | FASTQ / FASTQ.gz | Original tags and alignment info are dropped; only `fb:i:N` is kept in the header. Records without qualities get a `!` (Q0) placeholder. |
 | BAM | FASTA / FASTA.gz | Original tags and alignment info are dropped; only `fb:i:N` is kept in the header. Qualities are dropped. |
 | unmapped BAM | BAM | Header (`@HD`/`@RG`/`@PG`/`@CO`), flag and tags are kept; our `@PG` is chained after the last input `@PG`; `fb:i:N` is set (overwrites an input `fb`). Clipped/split records: `MM`/`ML` (and `MN`) are rewritten to the kept slice, `mv`/`ts` are dropped; split halves both inherit flag, tags and read group. |
-| aligned BAM | BAM | Not supported yet (error). |
+| aligned BAM | BAM | Not supported (error). Aligned BAM -> BAM output is out of scope: it would require handling secondary/supplementary records and rewriting alignment fields. Use FASTQ/FASTA or unmapped BAM output instead. |
 
 BAM output is never gzipped.
 
