@@ -82,3 +82,38 @@ def test_no_placeholder_warning_for_fasta_output(tmp_path, monkeypatch, capsys):
 def test_count_reads_fasta(tmp_path):
     fa = fastq_to_fasta(make_fastq(tmp_path / "reads.fastq"), tmp_path / "reads.fa")
     assert rld.count_reads(str(fa), "fasta") == 3
+
+
+def _fa_summary(path):
+    return [(r[0], len(r[1]), r[3].split()[-1]) for r in read_fasta(path)]
+
+
+@pytest.mark.parametrize("action", ["tag", "clip", "split", "filter"])
+@pytest.mark.parametrize("out", ["out.fa", "out.fa.gz"])
+def test_fastq_to_fasta_output(tmp_path, monkeypatch, capsys, action, out):
+    fq = make_fastq(tmp_path / "reads.fastq")
+    _run(fq, tmp_path / "o1", ["--output", str(tmp_path / "ref.fastq"), "--action", action], monkeypatch)
+    _run(fq, tmp_path / "o2", ["--output", str(tmp_path / out), "--action", action], monkeypatch)
+    ref = [l.split("\n") for l in open(tmp_path / "ref.fastq").read().split("@")[1:]]
+    assert _fa_summary(tmp_path / out) == [(h.split()[0], len(s), h.split()[-1]) for h, s, *_ in ref]
+    assert "without qualities" not in capsys.readouterr().err
+
+
+def test_output_format_fasta_extensionless(tmp_path, monkeypatch):
+    fq = make_fastq(tmp_path / "reads.fastq")
+    _run(fq, tmp_path / "o", ["--output", str(tmp_path / "out.out"), "--output-format", "fasta"], monkeypatch)
+    assert len(read_fasta(tmp_path / "out.out")) == 3
+
+
+def test_uppercase_gz_extension_is_compressed(tmp_path, monkeypatch):
+    fq = make_fastq(tmp_path / "reads.fastq")
+    out = tmp_path / "OUT.FA.GZ"
+    _run(fq, tmp_path / "o", ["--output", str(out)], monkeypatch)
+    assert open(out, "rb").read(2) == b"\x1f\x8b"
+    assert rld.resolve_output_format("x.FQ.GZ", None, "fastq") == "fastq.gz"
+
+
+@pytest.mark.parametrize("out,fmt", [("x.fa", "fastq"), ("x.fastq", "fasta"), ("x.fa.gz", "fastq.gz")])
+def test_format_extension_mismatch_errors(out, fmt):
+    with pytest.raises(ValueError):
+        rld.resolve_output_format(out, fmt, "fastq")

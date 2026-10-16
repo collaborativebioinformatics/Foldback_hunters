@@ -17,14 +17,13 @@ fold_position_bp, status). flagged is a boolean: raw_score >= --threshold
 (default 0.8). <stem> is the input filename stem (e.g. foo.fastq.gz -> foo,
 foo.bam -> foo).
 
-Optional read output : --output <reads.fastq|.fasta[.gz]>
-FASTA input requires FASTA output, which carries no qualities; BAM
-input is written as FASTQ and its tags/alignment are dropped, only fb:i:N is
-kept; records without qualities get '!' placeholders)
-with --action {tag,clip,filter,split} (default tag). Every emitted record
-gets " fb:i:1" (flagged) or " fb:i:0" appended to its header. clip keeps the
-longer side of the fold; split emits <id>_1 / <id>_2; filter drops flagged reads. clip/split cut at the
-detected fold position.
+Optional read output: --output <reads.fastq|.fasta[.gz]> with
+--action {tag,clip,filter,split} (default tag). Every emitted record gets
+" fb:i:1" (flagged) or " fb:i:0" appended to its header. clip keeps the longer
+side of the fold; split emits <id>_1 / <id>_2; filter drops flagged reads;
+clip/split cut at the detected fold position. FASTA output drops qualities. 
+BAM input is written as FASTQ/FASTA with only fb:i:N
+kept; records without qualities get '!' placeholders in FASTQ output.
 """
 
 import argparse
@@ -45,7 +44,7 @@ from foldback_score import revcomp, score_read
 
 
 def open_maybe_gz(path, mode="rt"):
-    return gzip.open(path, mode) if path.endswith(".gz") else open(path, mode)
+    return gzip.open(path, mode) if path.lower().endswith(".gz") else open(path, mode)
 
 
 def iter_fastq(path):
@@ -115,7 +114,7 @@ def stored_fold_position(fold_position_bp, seq_len, is_reverse):
 
 def parse_stem(fastq_path):
     basename = os.path.basename(fastq_path)
-    if basename.endswith(".gz"):
+    if basename.lower().endswith(".gz"):
         basename = basename[: -len(".gz")]
     stem, _ext = os.path.splitext(basename)
     return stem
@@ -146,15 +145,20 @@ def detect_format(path):
 def resolve_output_format(output, output_format, in_fmt):
     if output_format == "bam":
         raise ValueError("--output-format bam is not yet supported")
-    gz = output.endswith(".gz")
+    gz = output.lower().endswith(".gz")
+    base = output.lower().removesuffix(".gz")
+    ext_family = ("fasta" if base.endswith(FASTA_EXTS)
+                  else "fastq" if base.endswith((".fastq", ".fq")) else None)
     if output_format and output_format.endswith(".gz") != gz:
+        raise ValueError(f"--output-format {output_format} contradicts --output extension {output!r}")
+    if output_format and ext_family and not output_format.startswith(ext_family):
         raise ValueError(f"--output-format {output_format} contradicts --output extension {output!r}")
     if output_format:
         fmt = output_format
-    elif output.lower().removesuffix(".gz").endswith(FASTA_EXTS):
-        fmt = "fasta.gz" if gz else "fasta"
-    elif gz or output.lower().endswith((".fastq", ".fq")):
-        fmt = "fastq.gz" if gz else "fastq"
+    elif ext_family:
+        fmt = ext_family + (".gz" if gz else "")
+    elif gz:
+        fmt = "fastq.gz"
     else:
         fmt = "fastq" if in_fmt == "bam" else in_fmt
     if in_fmt.startswith("fasta") and fmt.startswith("fastq"):
@@ -335,9 +339,8 @@ def main():
              "9-condition benchmark threshold — do not change the default "
              "without rerunning that analysis.")
     ap.add_argument("--output", default=None,
-        help="Write reads to this FASTQ/FASTA (.gz ok). Accepts FASTQ, FASTA or BAM "
-             "input (FASTA output drops qualities; FASTA input needs FASTA output); BAM tags/alignment are dropped (only fb:i:N is kept) and "
-             "records without qualities get '!' placeholders. "
+        help="Write reads to this FASTQ/FASTA (.gz ok). FASTA output drops qualities "
+             "(needed for FASTA input). BAM input: tags/alignment dropped, only fb:i:N kept. "
              "Without it only the TSVs/summary are written.")
     ap.add_argument("--output-format", choices=["fastq", "fastq.gz", "fasta", "fasta.gz", "bam"], default=None,
         help="Output read format. Default: from the --output extension, else the "

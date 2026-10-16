@@ -321,3 +321,18 @@ def test_bam_output_skips_supplementary(tmp_path, monkeypatch):
     out = tmp_path / "o.fastq"
     _run(bam, tmp_path / "od", ["--output", str(out)], monkeypatch)
     assert [r[0].split()[0] for r in _parse(out)] == ["fwd_read", "rev_read"]
+
+
+@pytest.mark.parametrize("ext", ["fa", "fa.gz"])
+@pytest.mark.parametrize("action", ["tag", "clip", "filter", "split"])
+def test_bam_to_fasta_matches_fastq_output(tmp_path, monkeypatch, capsys, ext, action):
+    bam = tmp_path / "in.bam"
+    _write_bam(bam, _fold_records(), aligned=False)
+    out_q = tmp_path / "q.fastq"
+    out_a = tmp_path / f"a.{ext}"
+    _run(bam, tmp_path / "oq", ["--output", str(out_q), "--action", action], monkeypatch)
+    _run(bam, tmp_path / "oa", ["--output", str(out_a), "--action", action], monkeypatch)
+    fa = list(rld.iter_fasta(str(out_a)))
+    assert [(r[0], r[1], r[3]) for r in fa] == [(h.split()[0], s, h.split(None, 1)[1] if " " in h else "")
+                                                for h, s, _ in _parse(out_q)]
+    assert "without qualities" not in capsys.readouterr().err
