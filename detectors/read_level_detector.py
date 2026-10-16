@@ -2,7 +2,7 @@
 """
 foldback_hunter: CLI for reference-free foldback read-level detection
 
-    python detectors/read_level_detector.py --input <reads.fastq|.fastq.gz|.bam> \
+    python detectors/read_level_detector.py --input <reads.fastq|.fasta|.fa|.fna[.gz]|.bam> \
         --outdir results/ \
         [--processes N | --threads N] [--mode probe|full|seed] [--yes]
 
@@ -17,7 +17,8 @@ fold_position_bp, status). flagged is a boolean: raw_score >= --threshold
 (default 0.8). <stem> is the input filename stem (e.g. foo.fastq.gz -> foo,
 foo.bam -> foo).
 
-Optional read output : --output <reads.fastq[.gz]> (FASTQ or BAM input; BAM
+Optional read output : --output <reads.fastq|.fasta[.gz]>
+FASTA input requires FASTA output, which carries no qualities; BAM
 input is written as FASTQ and its tags/alignment are dropped, only fb:i:N is
 kept; records without qualities get '!' placeholders)
 with --action {tag,clip,filter,split} (default tag). Every emitted record
@@ -64,6 +65,28 @@ def iter_fastq(path):
             yield fields[0], seq, qual, (fields[1] if len(fields) > 1 else "")
 
 
+def iter_fasta(path):
+    """Yield (read_id, seq, None, header_rest) from a FASTA (multi-line records
+    allowed). Holds one record at a time; seq keeps its original case."""
+    def rec(header, parts):
+        fields = header.split(None, 1)
+        return (fields[0] if fields else ""), "".join(parts), None, (fields[1] if len(fields) > 1 else "")
+
+    header = None
+    parts = []
+    with open_maybe_gz(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if line.startswith(">"):
+                if header is not None:
+                    yield rec(header, parts)
+                header, parts = line[1:], []
+            elif line and header is not None:
+                parts.append(line)
+    if header is not None:
+        yield rec(header, parts)
+
+
 def iter_bam(path):
     """Yield (read_id, seq, qual, "") from a BAM (aligned or unaligned),
     primary records only, in original read orientation. 
@@ -98,9 +121,16 @@ def parse_stem(fastq_path):
     return stem
 
 
+FASTA_EXTS = (".fasta", ".fa", ".fna")
+
+
 def detect_format(path):
-    """Classify an input path by extension: fastq, fastq.gz, or bam."""
+    """Classify an input path by extension: fastq[.gz], fasta[.gz], or bam."""
     lower = path.lower()
+    if lower.endswith(FASTA_EXTS):
+        return "fasta"
+    if lower.endswith(tuple(e + ".gz" for e in FASTA_EXTS)):
+        return "fasta.gz"
     if lower.endswith(".fastq.gz") or lower.endswith(".fq.gz"):
         return "fastq.gz"
     if lower.endswith(".fastq") or lower.endswith(".fq"):
@@ -109,24 +139,41 @@ def detect_format(path):
         return "bam"
     raise SystemExit(
         f"Unrecognized input extension: {path!r}. "
-        "Expected .fastq, .fq, .fastq.gz, .fq.gz, or .bam."
+        "Expected .fastq, .fq, .fasta, .fa, .fna (each optionally .gz), or .bam."
     )
 
 
 def resolve_output_format(output, output_format, in_fmt):
     if output_format == "bam":
         raise ValueError("--output-format bam is not yet supported")
-    ext_fmt = "fastq.gz" if output.endswith(".gz") else None
-    if output_format == "fastq" and ext_fmt:
-        raise ValueError(f"--output-format fastq contradicts --output extension {output!r}")
-    if output_format == "fastq.gz" and not ext_fmt:
-        raise ValueError(f"--output-format fastq.gz contradicts --output extension {output!r}")
-    return output_format or ext_fmt or ("fastq" if in_fmt == "bam" else in_fmt)
+    gz = output.endswith(".gz")
+    if output_format and output_format.endswith(".gz") != gz:
+        raise ValueError(f"--output-format {output_format} contradicts --output extension {output!r}")
+    if output_format:
+        fmt = output_format
+    elif output.lower().removesuffix(".gz").endswith(FASTA_EXTS):
+        fmt = "fasta.gz" if gz else "fasta"
+    elif gz or output.lower().endswith((".fastq", ".fq")):
+        fmt = "fastq.gz" if gz else "fastq"
+    else:
+        fmt = "fastq" if in_fmt == "bam" else in_fmt
+    if in_fmt.startswith("fasta") and fmt.startswith("fastq"):
+        raise ValueError("FASTA input has no qualities; use a FASTA output (--output-format fasta[.gz])")
+    return fmt
 
 
 def format_fastq_record(rid, comment, seq, qual, tag):
     header = f"@{rid} {comment} {tag}" if comment else f"@{rid} {tag}"
     return f"{header}\n{seq}\n+\n{qual}\n"
+
+
+def format_fasta_record(rid, comment, seq, tag):
+    header = f">{rid} {comment} {tag}" if comment else f">{rid} {tag}"
+    return f"{header}\n{seq}\n"
+
+
+def _cut(qual, a, b):
+    return None if qual is None else qual[a:b]
 
 
 def apply_action(action, rec, flagged, fold_pos):
@@ -144,10 +191,11 @@ def apply_action(action, rec, flagged, fold_pos):
     p = int(fold_pos)
     if action == "clip":
         if p >= len(seq) - p:
-            return [(rid, seq[:p], qual[:p], tag)]
-        return [(rid, seq[p:], qual[p:], tag)]
+            return [(rid, seq[:p], _cut(qual, None, p), tag)]
+        return [(rid, seq[p:], _cut(qual, p, None), tag)]
     # split
-    return [(f"{rid}_1", seq[:p], qual[:p], tag), (f"{rid}_2", seq[p:], qual[p:], tag)]
+    return [(f"{rid}_1", seq[:p], _cut(qual, None, p), tag),
+            (f"{rid}_2", seq[p:], _cut(qual, p, None), tag)]
 
 
 def _score_worker(task):
@@ -211,6 +259,7 @@ FULL_SEC_PER_READ = 1.2  # rough --mode full cost, used for the ETA
 # Shorter reads or BAMs without modbase tags will be smaller per read.
 FASTQ_GZ_BYTES_PER_READ = 16500
 BAM_BYTES_PER_READ = 21000
+FASTA_GZ_BYTES_PER_READ = 4700
 
 
 def format_eta(seconds):
@@ -225,6 +274,9 @@ def count_reads(path, fmt):
     if fmt == "fastq":
         with open(path, "rb") as fh:
             return sum(1 for _ in fh) // 4
+    if fmt == "fasta":
+        with open(path, "rb") as fh:
+            return sum(1 for line in fh if line.startswith(b">"))
     if fmt == "bam":
         import pysam
 
@@ -233,7 +285,8 @@ def count_reads(path, fmt):
                 # idxstats counts secondary/supplementary records too, so this
                 # overestimates the primary reads actually scored.
                 return sum(s.total for s in af.get_index_statistics()) + af.nocoordinate
-    bytes_per_read = BAM_BYTES_PER_READ if fmt == "bam" else FASTQ_GZ_BYTES_PER_READ
+    bytes_per_read = {"bam": BAM_BYTES_PER_READ, "fasta.gz": FASTA_GZ_BYTES_PER_READ}.get(
+        fmt, FASTQ_GZ_BYTES_PER_READ)
     return os.path.getsize(path) // bytes_per_read
 
 
@@ -256,7 +309,7 @@ def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--input", required=True, help="Input reads: FASTQ (plain or .gz) or BAM.")
+    ap.add_argument("--input", required=True, help="Input reads: FASTQ or FASTA (plain or .gz) or BAM.")
     ap.add_argument("--outdir", default="results")
     parallel_group = ap.add_mutually_exclusive_group()
     parallel_group.add_argument("--processes", type=int, default=None,
@@ -282,11 +335,11 @@ def main():
              "9-condition benchmark threshold — do not change the default "
              "without rerunning that analysis.")
     ap.add_argument("--output", default=None,
-        help="Write reads to this FASTQ/.gz. Accepts FASTQ or BAM "
-             "input; BAM tags/alignment are dropped (only fb:i:N is kept) and "
+        help="Write reads to this FASTQ/FASTA (.gz ok). Accepts FASTQ, FASTA or BAM "
+             "input (FASTA output drops qualities; FASTA input needs FASTA output); BAM tags/alignment are dropped (only fb:i:N is kept) and "
              "records without qualities get '!' placeholders. "
              "Without it only the TSVs/summary are written.")
-    ap.add_argument("--output-format", choices=["fastq", "fastq.gz", "bam"], default=None,
+    ap.add_argument("--output-format", choices=["fastq", "fastq.gz", "fasta", "fasta.gz", "bam"], default=None,
         help="Output read format. Default: from the --output extension, else the "
              "input format. bam is not yet supported.")
     ap.add_argument("--action", choices=["tag", "clip", "filter", "split"], default=None,
@@ -303,7 +356,7 @@ def main():
         if os.path.abspath(args.output) == os.path.abspath(args.input):
             ap.error("--output must differ from --input")
         try:
-            resolve_output_format(args.output, args.output_format, fmt)
+            out_fmt = resolve_output_format(args.output, args.output_format, fmt)
         except ValueError as e:
             ap.error(str(e))
         # if action in ("clip", "split"):
@@ -342,6 +395,8 @@ def main():
 
     if fmt in ("fastq", "fastq.gz"):
         reads = iter_fastq(args.input)
+    elif fmt in ("fasta", "fasta.gz"):
+        reads = iter_fasta(args.input)
     elif fmt == "bam":
         reads = iter_bam(args.input)
 
@@ -353,7 +408,7 @@ def main():
         nonlocal warned_no_qual
         for rec in reads:
             if args.output:
-                if rec[2] is None:
+                if rec[2] is None and out_fmt.startswith("fastq"):
                     if not warned_no_qual:
                         print("[foldback_hunter] WARNING: BAM record(s) without "
                               "qualities; writing '!' (Q0) placeholder",
@@ -408,7 +463,8 @@ def main():
             if out_fh:
                 rec = pending.popleft()
                 for rid, seq, qual, tag in apply_action(action, rec, flagged, r.fold_position_bp):
-                    out_fh.write(format_fastq_record(rid, rec[3], seq, qual, tag))
+                    out_fh.write(format_fasta_record(rid, rec[3], seq, tag) if out_fmt.startswith("fasta")
+                                 else format_fastq_record(rid, rec[3], seq, qual, tag))
                 if flagged and (action == "filter"
                                 or (action in ("clip", "split") and r.fold_position_bp is not None)):
                     acted_reads += 1

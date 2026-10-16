@@ -34,7 +34,7 @@ pip install -r requirements.txt
 
 ### Quickstart
 
-Run the read-level detector on a FASTQ or BAM:
+Run the read-level detector on a FASTQ, FASTA or BAM:
 ```bash
 python detectors/read_level_detector.py --input sim/sim_middle.fastq --outdir results/
 ```
@@ -50,14 +50,14 @@ This writes two TSVs and a summary JSON to `results/` (see [schema.md](schema.md
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--input` | *(required)* | Input reads: FASTQ (plain or `.gz`) or BAM. Format autodetected from extension. |
+| `--input` | *(required)* | Input reads: FASTQ, FASTA (`.fasta`/`.fa`/`.fna`) (plain or `.gz`) or BAM. Format autodetected from extension. |
 | `--outdir` | `results` | Output directory (created if missing). |
 | `--mode` | `probe` | Scoring mode: `probe` (fast edlib infix search), `full` (parasail Smith-Waterman, slow, ~1.2 s/read — asks for confirmation first, see `--yes`), or `seed` (k-mer seed + bounded edlib, good middle ground). |
 | `--processes` | `None` | Number of worker processes for parallel scoring. Mutually exclusive with `--threads`. Warns (does not fail) if above the available CPU count. |
 | `--threads` | `None` | Number of threads for parallel scoring (`concurrent.futures.ThreadPoolExecutor`). Threads well for `--mode full`/`probe` (parasail/edlib release the GIL), but not `--mode seed` (pure-Python k-mer matching loop holds the GIL) — use `--processes` there instead. Mutually exclusive with `--processes`. Warns (does not fail) if above the available CPU count. |
 | `--yes`, `-y` | off | Skip the `--mode full` confirmation prompt. Without it, `--mode full` prints the read count and ETA (~1.2 s/read) and asks `Proceed? [y/N]`; anything but `y`/`yes` aborts with a nonzero exit. If stdin is not a TTY, it exits with that message instead of prompting. |
-| `--output` | `None` | Also write reads to this FASTQ (`.gz` by extension); must differ from `--input`. Accepts FASTQ or BAM input. For BAM input, original tags and alignment info are dropped and only `fb:i:N` is kept in the header; records without qualities are written with a `!` (Q0) placeholder. Without `--output` only the TSVs and summary are written. |
-| `--output-format` | from `--output` extension, else `fastq` | `fastq` or `fastq.gz`; errors if it contradicts the `--output` extension. |
+| `--output` | `None` | Also write reads to this FASTQ (`.gz` by extension); must differ from `--input`. Accepts FASTQ, FASTA or BAM input; FASTA input requires FASTA output (no qualities, no `!` placeholders; FASTQ/BAM input may also write FASTA, dropping qualities). For BAM input, original tags and alignment info are dropped and only `fb:i:N` is kept in the header; records without qualities are written with a `!` (Q0) placeholder. Without `--output` only the TSVs and summary are written. |
+| `--output-format` | from `--output` extension, else `fastq` | `fastq`, `fastq.gz`, `fasta` or `fasta.gz`; errors if it contradicts the `--output` extension. |
 | `--action` | `tag` | Requires `--output`. `tag`: append `fb:i:1`/`fb:i:0` to every header (after any existing comment). `clip`: flagged reads keep the longer side of the fold (tie keeps the first half), quals sliced identically. `filter`: drop flagged reads. `split`: flagged reads become `<id>_1` (`[:p]`) and `<id>_2` (`[p:]`), both `fb:i:1`. Unflagged reads pass through unchanged (`fb:i:0`). The summary JSON reflects `action` output. |
 
 The whole input is always scored. To subset the input, use `seqtk sample` / `samtools view -s`.
