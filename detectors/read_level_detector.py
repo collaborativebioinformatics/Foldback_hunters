@@ -27,12 +27,15 @@ kept; records without qualities get '!' placeholders in FASTQ output.
 """
 
 import argparse
+import array
+import bisect
 import csv
 import gzip
 import itertools
 import json
 import math
 import os
+import re
 import sys
 import time
 from collections import deque
@@ -86,14 +89,32 @@ def iter_fasta(path):
         yield rec(header, parts)
 
 
-def iter_bam(path):
+ALIGNED_BAM_MSG = ("aligned BAM -> BAM is not supported yet (Phase 05); "
+                   "use FASTQ/FASTA output or an unmapped BAM")
+
+
+def read_ubam_header(path):
+    """Return the header of an unmapped BAM; exit if it has @SQ (aligned)."""
+    import pysam
+
+    with pysam.AlignmentFile(path, "rb", check_sq=False) as af:
+        if af.references:
+            raise SystemExit(ALIGNED_BAM_MSG)
+        return af.header
+
+
+def iter_bam(path, keep_meta=False):
     """Yield (read_id, seq, qual, "") from a BAM (aligned or unaligned),
     primary records only, in original read orientation. 
-    qual is None when the record has no qualities."""
+    qual is None when the record has no qualities.
+    keep_meta (uBAM -> uBAM): the 4th element is (flag, tags, seq) instead, and
+    a mapped record is an error."""
     import pysam  # deferred: only needed for BAM input, keeps FASTQ path pysam-free
 
     with pysam.AlignmentFile(path, "rb", check_sq=False) as af:
         for rec in af:
+            if keep_meta and not rec.is_unmapped:
+                raise SystemExit(ALIGNED_BAM_MSG)
             if rec.is_secondary or rec.is_supplementary:
                 continue
             seq = rec.query_sequence
@@ -105,7 +126,9 @@ def iter_bam(path):
                 seq = revcomp(seq)
                 if qual is not None:
                     qual = qual[::-1]
-            yield rec.query_name, seq.upper(), qual, ""
+            seq = seq.upper()
+            yield rec.query_name, seq, qual, (
+                (rec.flag, rec.get_tags(with_value_type=True), seq) if keep_meta else "")
 
 
 def stored_fold_position(fold_position_bp, seq_len, is_reverse):
@@ -163,35 +186,98 @@ def resolve_output_format(output, output_format, in_fmt):
         fmt = "fastq.gz"
     else:
         fmt = "fastq" if in_fmt == "bam" else in_fmt
-    if in_fmt == "bam" and fmt == "bam":
-        raise ValueError("BAM->BAM output is not yet supported (Phase 04/05)")
     if in_fmt.startswith("fasta") and fmt.startswith("fastq"):
         raise ValueError("FASTA input has no qualities; use a FASTA or BAM output (--output-format fasta[.gz]|bam)")
     return fmt
 
 
-def open_bam_writer(path, argv):
-    """Unmapped-BAM writer: @HD SO:unknown + @PG with the command line, no @SQ."""
+def open_bam_writer(path, argv, template_header=None):
+    """Unmapped-BAM writer: @HD SO:unknown + @PG with the command line, no @SQ.
+    With template_header (uBAM input) its @HD/@RG/@PG/@CO are kept and our @PG
+    is chained after the last input @PG."""
     import pysam  # deferred, like iter_bam
 
-    header = {"HD": {"VN": "1.6", "SO": "unknown"},
-              "PG": [{"ID": "foldback_hunter", "PN": "foldback_hunter",
-                      "CL": " ".join(argv)}]}
+    header = template_header.to_dict() if template_header else {}
+    header.setdefault("HD", {"VN": "1.6", "SO": "unknown"})
+    pgs = header.setdefault("PG", [])
+    ids = {pg["ID"] for pg in pgs}
+    pg_id, n = "foldback_hunter", 0
+    while pg_id in ids:
+        n += 1
+        pg_id = f"foldback_hunter.{n}"
+    pg = {"ID": pg_id, "PN": "foldback_hunter", "CL": " ".join(argv)}
+    if pgs:
+        pg["PP"] = pgs[-1]["ID"]
+    pgs.append(pg)
     return pysam.AlignmentFile(path, "wb", header=header)
 
 
-def make_bam_record(header, rid, seq, qual, tag):
+_MM_ENTRY = re.compile(r"([ACGTUN])([+-])([a-z]+|\d+)([?.]?)((?:,\d+)*)$")
+
+
+def slice_modbase(seq, mm, ml, a, b):
+    """Rewrite MM/ML for the read slice seq[a:b]. Returns (mm, ml); both None
+    when no call survives; ml is None if the input ml is."""
+    mm_out, ml_out, off = [], [], 0
+    for entry in filter(None, mm.split(";")):
+        m = _MM_ENTRY.match(entry)
+        if not m:
+            raise ValueError(f"unparseable MM entry {entry!r}")
+        base, strand, code, flag, skips = m.groups()
+        n = len(code) if code.isalpha() else 1
+        skips = [int(x) for x in skips.split(",")[1:]]
+        pos = [i for i, c in enumerate(seq) if base == "N" or c == base]
+        before = bisect.bisect_left(pos, a)
+        new_skips, kept_ml, k, prev = [], [], -1, -1
+        for j, s in enumerate(skips):
+            k += s + 1
+            if a <= pos[k] < b:
+                new_k = k - before
+                new_skips.append(new_k - prev - 1)
+                prev = new_k
+                kept_ml += ml[off + j * n: off + (j + 1) * n] if ml is not None else []
+        off += len(skips) * n
+        if new_skips:
+            mm_out.append(f"{base}{strand}{code}{flag}" + "".join(f",{x}" for x in new_skips))
+            ml_out += kept_ml
+    if not mm_out:
+        return None, None
+    return ";".join(mm_out) + ";", (array.array("B", ml_out) if ml is not None else None)
+
+
+def make_bam_record(header, rid, seq, qual, tag, meta=None, span=None):
+    """meta = (flag, tags, full_seq) from iter_bam(keep_meta=True): copy flag and
+    tags. span = (a, b) slice of the original read this record holds: MM/ML are
+    rewritten to it, mv/ts dropped (not rewritten)."""
     import pysam
 
     a = pysam.AlignedSegment(header)
     a.query_name = rid
-    a.flag = 4
+    a.flag = 4 if meta is None else meta[0]
     a.reference_id = -1
     a.reference_start = -1
     a.mapping_quality = 0
     a.query_sequence = seq  # must precede qualities: setting seq clears them
     if qual is not None:
         a.query_qualities = pysam.qualitystring_to_array(qual)
+    if meta is not None:
+        tags = {t: (v, vt) for t, v, vt in meta[1]}
+        if span is not None:
+            for t in ("mv", "ts"):
+                tags.pop(t, None)
+            if "MM" in tags:
+                ml = tags["ML"][0] if "ML" in tags else None
+                mm, ml = slice_modbase(meta[2], tags["MM"][0], ml, *span)
+                tags.pop("MM"); tags.pop("ML", None)
+                if mm is not None:
+                    tags["MM"] = (mm, "Z")
+                    if ml is not None:
+                        tags["ML"] = (ml, "B")
+            if "MN" in tags:
+                tags["MN"] = (len(seq), "i")
+        for t, (v, vt) in tags.items():
+            if t != "fb":
+                a.set_tag(t, v, value_type=None if vt == "B" else vt)  # arrays: type from typecode
     a.set_tag("fb", int(tag.rsplit(":", 1)[1]), value_type="i")
     return a
 
@@ -211,7 +297,8 @@ def _cut(qual, a, b):
 
 
 def apply_action(action, rec, flagged, fold_pos):
-    """Return the output records [(id, seq, qual, tag)] (0, 1 or 2) for one read.
+    """Return the output records [(id, seq, qual, tag, span)] (0, 1 or 2) for one read;
+    span = (a, b) slice of the original read for cut records, else None.
     rec = (read_id, seq, qual, header_rest).
     Reads that are unflagged (or lack a fold position) pass through,
     tagged fb:i:0 (fb:i:1 if flagged without a position).
@@ -219,17 +306,17 @@ def apply_action(action, rec, flagged, fold_pos):
     rid, seq, qual, _rest = rec
     tag = "fb:i:1" if flagged else "fb:i:0"
     if action == "filter":
-        return [] if flagged else [(rid, seq, qual, tag)]
+        return [] if flagged else [(rid, seq, qual, tag, None)]
     if action == "tag" or not flagged or fold_pos is None:
-        return [(rid, seq, qual, tag)]
+        return [(rid, seq, qual, tag, None)]
     p = int(fold_pos)
     if action == "clip":
         if p >= len(seq) - p:
-            return [(rid, seq[:p], _cut(qual, None, p), tag)]
-        return [(rid, seq[p:], _cut(qual, p, None), tag)]
+            return [(rid, seq[:p], _cut(qual, None, p), tag, (0, p))]
+        return [(rid, seq[p:], _cut(qual, p, None), tag, (p, len(seq)))]
     # split
-    return [(f"{rid}_1", seq[:p], _cut(qual, None, p), tag),
-            (f"{rid}_2", seq[p:], _cut(qual, p, None), tag)]
+    return [(f"{rid}_1", seq[:p], _cut(qual, None, p), tag, (0, p)),
+            (f"{rid}_2", seq[p:], _cut(qual, p, None), tag, (p, len(seq)))]
 
 
 def _score_worker(task):
@@ -370,9 +457,10 @@ def main():
              "without rerunning that analysis.")
     ap.add_argument("--output", default=None,
         help="Write reads to this FASTQ/FASTA (.gz ok) or unmapped BAM (.bam). FASTA output "
-             "drops qualities (needed for FASTA input; FASTA->BAM stores none). BAM input: "
+             "drops qualities (needed for FASTA input; FASTA->BAM stores none). BAM input to FASTQ/FASTA: "
              "tags/alignment dropped, only fb:i:N kept. FASTQ header comments are dropped in "
-             "BAM output. BAM->BAM is not yet supported. "
+             "BAM output. Unmapped BAM -> BAM keeps the header, flag and tags (MM/ML "
+             "rewritten, mv/ts dropped on clipped/split records); aligned BAM -> BAM errors. "
              "Without it only the TSVs/summary are written.")
     ap.add_argument("--output-format", choices=["fastq", "fastq.gz", "fasta", "fasta.gz", "bam"], default=None,
         help="Output read format. Default: from the --output extension, else the "
@@ -433,7 +521,10 @@ def main():
     elif fmt in ("fasta", "fasta.gz"):
         reads = iter_fasta(args.input)
     elif fmt == "bam":
-        reads = iter_bam(args.input)
+        reads = iter_bam(args.input, keep_meta=bool(args.output) and out_fmt == "bam")
+
+    in_header = read_ubam_header(args.input) if (
+        fmt == "bam" and args.output and out_fmt == "bam") else None
 
     pending = deque()  # records awaiting their result; bounded by _ordered_bounded
 
@@ -471,18 +562,19 @@ def main():
          ExitStack() as stack:
         out_fh = None
         if args.output and out_fmt == "bam":
-            out_fh = stack.enter_context(open_bam_writer(args.output, sys.argv))
+            out_fh = stack.enter_context(open_bam_writer(args.output, sys.argv, in_header))
             bam_header = out_fh.header
 
-            def emit(rid, comment, seq, qual, tag):
-                out_fh.write(make_bam_record(bam_header, rid, seq, qual, tag))
+            def emit(rid, comment, seq, qual, tag, span):
+                meta = comment if isinstance(comment, tuple) else None
+                out_fh.write(make_bam_record(bam_header, rid, seq, qual, tag, meta, span))
         elif args.output:
             out_fh = stack.enter_context(open_maybe_gz(args.output, "wt"))
             if out_fmt.startswith("fasta"):
-                def emit(rid, comment, seq, qual, tag):
+                def emit(rid, comment, seq, qual, tag, span):
                     out_fh.write(format_fasta_record(rid, comment, seq, tag))
             else:
-                def emit(rid, comment, seq, qual, tag):
+                def emit(rid, comment, seq, qual, tag, span):
                     out_fh.write(format_fastq_record(rid, comment, seq, qual, tag))
         if args.processes:
             pool = stack.enter_context(Pool(args.processes))
@@ -511,8 +603,8 @@ def main():
             flagged_reads += flagged
             if out_fh:
                 rec = pending.popleft()
-                for rid, seq, qual, tag in apply_action(action, rec, flagged, r.fold_position_bp):
-                    emit(rid, rec[3], seq, qual, tag)
+                for rid, seq, qual, tag, span in apply_action(action, rec, flagged, r.fold_position_bp):
+                    emit(rid, rec[3], seq, qual, tag, span)
                 if flagged and (action == "filter"
                                 or (action in ("clip", "split") and r.fold_position_bp is not None)):
                     acted_reads += 1

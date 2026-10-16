@@ -85,8 +85,7 @@ def test_extension_inference_and_errors(tmp_path, monkeypatch):
     assert f("x.bam", None, "fastq") == "bam"
     assert f("x", "bam", "fasta") == "bam"
     for args in [("x.fastq", "bam", "fastq"), ("x.bam", "fastq", "fastq"),
-                 ("x.bam.gz", None, "fastq"), ("x.bam", "bam", "bam"),
-                 ("x.bam", None, "bam")]:
+                 ("x.bam.gz", None, "fastq")]:
         with pytest.raises(ValueError):
             f(*args)
 
@@ -100,7 +99,7 @@ def test_near_end_fold_split(tmp_path, monkeypatch):
     # exercise the writer directly with edge positions
     with rld.open_bam_writer(str(out), ["t"]) as w:
         for rid, s, p in recs:
-            for orid, oseq, oqual, tag in rld.apply_action("split", (rid, s, "I" * len(s), ""), True, p):
+            for orid, oseq, oqual, tag, _span in rld.apply_action("split", (rid, s, "I" * len(s), ""), True, p):
                 w.write(rld.make_bam_record(w.header, orid, oseq, oqual, tag))
     got = _bam_records(out)
     assert len(got) == 4
