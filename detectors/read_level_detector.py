@@ -16,6 +16,12 @@ and scores_foldback_hunter_<stem>.tsv (read_id, raw_score,
 fold_position_bp, status). flagged is a boolean: raw_score >= --threshold
 (default 0.8). <stem> is the input filename stem (e.g. foo.fastq.gz -> foo,
 foo.bam -> foo).
+
+Optional read output : --output <reads.fastq[.gz]>
+with --action {tag,clip,filter,split} (default tag). Every emitted record
+gets " fb:i:1" (flagged) or " fb:i:0" appended to its header. clip keeps the
+longer side of the fold; split emits <id>_1 / <id>_2; filter drops flagged reads. clip/split cut at the
+detected fold position.
 """
 
 import argparse
@@ -40,7 +46,8 @@ def open_maybe_gz(path, mode="rt"):
 
 
 def iter_fastq(path):
-    """Yield (read_id, seq) from a FASTQ (plain or .gz)."""
+    """Yield (read_id, seq, qual, header_rest) from a FASTQ.
+    seq keeps its original case; header_rest is the header text after the id"""
     with open_maybe_gz(path) as fh:
         while True:
             header = fh.readline()
@@ -48,11 +55,11 @@ def iter_fastq(path):
                 break
             seq = fh.readline().rstrip("\n")
             plus = fh.readline()
-            fh.readline()  # qual, unused
+            qual = fh.readline().rstrip("\n")
             if not plus:
                 break
-            read_id = header.rstrip("\n").lstrip("@").split()[0]
-            yield read_id, seq.upper()
+            fields = header.rstrip("\n").lstrip("@").split(None, 1)
+            yield fields[0], seq, qual, (fields[1] if len(fields) > 1 else "")
 
 
 def iter_bam(path):
@@ -96,6 +103,46 @@ def detect_format(path):
         f"Unrecognized input extension: {path!r}. "
         "Expected .fastq, .fq, .fastq.gz, .fq.gz, or .bam."
     )
+
+
+def resolve_output_format(output, output_format, in_fmt):
+    if output_format == "bam":
+        raise ValueError("--output-format bam is not yet supported")
+    if in_fmt == "bam":
+        raise ValueError("BAM input with --output is not yet supported "
+                         "(planned: Phase 02); use FASTQ input")
+    ext_fmt = "fastq.gz" if output.endswith(".gz") else None
+    if output_format == "fastq" and ext_fmt:
+        raise ValueError(f"--output-format fastq contradicts --output extension {output!r}")
+    if output_format == "fastq.gz" and not ext_fmt:
+        raise ValueError(f"--output-format fastq.gz contradicts --output extension {output!r}")
+    return output_format or ext_fmt or in_fmt
+
+
+def format_fastq_record(rid, comment, seq, qual, tag):
+    header = f"@{rid} {comment} {tag}" if comment else f"@{rid} {tag}"
+    return f"{header}\n{seq}\n+\n{qual}\n"
+
+
+def apply_action(action, rec, flagged, fold_pos):
+    """Return the output records [(id, seq, qual, tag)] (0, 1 or 2) for one read.
+    rec = (read_id, seq, qual, header_rest).
+    Reads that are unflagged (or lack a fold position) pass through,
+    tagged fb:i:0 (fb:i:1 if flagged without a position).
+    """
+    rid, seq, qual, _rest = rec
+    tag = "fb:i:1" if flagged else "fb:i:0"
+    if action == "filter":
+        return [] if flagged else [(rid, seq, qual, tag)]
+    if action == "tag" or not flagged or fold_pos is None:
+        return [(rid, seq, qual, tag)]
+    p = int(fold_pos)
+    if action == "clip":
+        if p >= len(seq) - p:
+            return [(rid, seq[:p], qual[:p], tag)]
+        return [(rid, seq[p:], qual[p:], tag)]
+    # split
+    return [(f"{rid}_1", seq[:p], qual[:p], tag), (f"{rid}_2", seq[p:], qual[p:], tag)]
 
 
 def _score_worker(task):
@@ -229,9 +276,36 @@ def main():
              "Default 0.8 matches analysis/plot_Framing_A.py's published "
              "9-condition benchmark threshold — do not change the default "
              "without rerunning that analysis.")
+    ap.add_argument("--output", default=None,
+        help="Write reads to this FASTQ (.gz by extension). FASTQ input only. "
+             "Without it only the TSVs/summary are written.")
+    ap.add_argument("--output-format", choices=["fastq", "fastq.gz", "bam"], default=None,
+        help="Output read format. Default: from the --output extension, else the "
+             "input format. bam is not yet supported.")
+    ap.add_argument("--action", choices=["tag", "clip", "filter", "split"], default=None,
+        help="What to do with reads written to --output (default tag): tag appends "
+             "fb:i:1|0 to the header; clip keeps the longer side of the fold; "
+             "filter drops flagged reads; split emits <id>_1 and <id>_2")
     args = ap.parse_args()
 
     fmt = detect_format(args.input)
+    if args.action and not args.output:
+        ap.error("--action requires --output")
+    action = args.action or "tag"
+    if args.output:
+        if os.path.abspath(args.output) == os.path.abspath(args.input):
+            ap.error("--output must differ from --input")
+        try:
+            resolve_output_format(args.output, args.output_format, fmt)
+        except ValueError as e:
+            ap.error(str(e))
+        # if action in ("clip", "split"):
+        #     print(
+        #         f"[foldback_hunter] WARNING: --action {action}"
+        #         "cuts at a fold position that is unvalidated on "
+        #         "noisy reads. Continuing anyway.",
+        #         file=sys.stderr,
+        #     )
     if args.mode == "full":
         confirm_full_run(args.input, fmt, args.yes)
 
@@ -262,9 +336,17 @@ def main():
     if fmt in ("fastq", "fastq.gz"):
         reads = iter_fastq(args.input)
     elif fmt == "bam":
-        reads = iter_bam(args.input)
+        reads = ((rid, seq, None, "") for rid, seq in iter_bam(args.input))
 
-    tasks = ((read_id, seq, args.mode) for read_id, seq in reads)
+    pending = deque()  # records awaiting their result; bounded by _ordered_bounded
+
+    def _tasks():
+        for rec in reads:
+            if args.output:
+                pending.append(rec)
+            yield rec[0], rec[1].upper(), args.mode
+
+    tasks = _tasks()
 
     calls_path = os.path.join(args.outdir, f"calls_foldback_hunter_{stem}.tsv")
     scores_path = os.path.join(args.outdir, f"scores_foldback_hunter_{stem}.tsv")
@@ -273,12 +355,14 @@ def main():
 
     total_reads = 0
     flagged_reads = 0
+    acted_reads = 0
     # runtime_sec covers scoring interleaved with TSV writing (streamed, so the
     # two cannot be timed separately).
     scoring_start = time.perf_counter()
     with open(calls_path, "w", newline="") as calls_fh, \
          open(scores_path, "w", newline="") as scores_fh, \
          ExitStack() as stack:
+        out_fh = stack.enter_context(open_maybe_gz(args.output, "wt")) if args.output else None
         if args.processes:
             pool = stack.enter_context(Pool(args.processes))
             results = _ordered_bounded(
@@ -304,6 +388,13 @@ def main():
             scores_writer.writerow([r.read_id, raw_score, fold_pos, r.status])
             total_reads += 1
             flagged_reads += flagged
+            if out_fh:
+                rec = pending.popleft()
+                for rid, seq, qual, tag in apply_action(action, rec, flagged, r.fold_position_bp):
+                    out_fh.write(format_fastq_record(rid, rec[3], seq, qual, tag))
+                if flagged and (action == "filter"
+                                or (action in ("clip", "split") and r.fold_position_bp is not None)):
+                    acted_reads += 1
     runtime_sec = time.perf_counter() - scoring_start
 
     foldback_rate = round(flagged_reads / total_reads, 4) if total_reads else 0.0
@@ -316,11 +407,14 @@ def main():
         "threads": args.threads,
         "total_reads": total_reads,
         "flagged_reads": flagged_reads,
-        "clipped_reads": 0,
-        "filtered_reads": 0,
+        "clipped_reads": acted_reads if action == "clip" and args.output else 0,
+        "filtered_reads": acted_reads if action == "filter" and args.output else 0,
         "foldback_rate": foldback_rate,
         "runtime_sec": round(runtime_sec, 4),
     }
+    if args.output:
+        summary["split_reads"] = acted_reads if action == "split" else 0
+        summary["action"] = action
 
     summary_path = os.path.join(args.outdir, f"summary_foldback_hunter_{stem}.json")
     with open(summary_path, "w") as summary_fh:
@@ -331,6 +425,8 @@ def main():
     print(f"[foldback_hunter] wrote {calls_path}")
     print(f"[foldback_hunter] wrote {scores_path}")
     print(f"[foldback_hunter] wrote {summary_path}")
+    if args.output:
+        print(f"[foldback_hunter] wrote {args.output}")
 
 
 if __name__ == "__main__":

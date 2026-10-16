@@ -257,3 +257,112 @@ def test_ordered_bounded_preserves_order(chunksize):
             lambda c: ex.submit(work, c), lambda f: f.result(),
             iter(tasks), 4, chunksize))
     assert out == tasks
+
+
+# ---- --output / --action ----
+
+import gzip
+
+
+def _make_fq(path, reads):
+    with open(path, "w") as fh:
+        for rid, seq, comment in reads:
+            qual = "".join(chr(33 + (i % 40)) for i in range(len(seq)))
+            fh.write(f"@{rid}{' ' + comment if comment else ''}\n{seq}\n+\n{qual}\n")
+    return path
+
+
+def _reads():
+    return [
+        ("r1", make_foldback_read(2000, 1000, seed=1), "runid=abc"),
+        ("r2", make_foldback_read(2000, 1500, seed=2), ""),
+        ("r3", "".join(random.Random(3).choice("ACGT") for _ in range(2000)), ""),
+    ]
+
+
+def _parse(path):
+    opener = gzip.open if str(path).endswith(".gz") else open
+    with opener(path, "rt") as fh:
+        lines = fh.read().splitlines()
+    return [(lines[i][1:], lines[i + 1], lines[i + 3]) for i in range(0, len(lines), 4)]
+
+
+@pytest.mark.parametrize("out_name", ["out.fastq", "out.fastq.gz"])
+@pytest.mark.parametrize("action", ["tag", "clip", "filter", "split"])
+def test_actions(tmp_path, monkeypatch, action, out_name):
+    fq = _make_fq(tmp_path / "in.fastq", _reads())
+    out = tmp_path / out_name
+    _run(fq, tmp_path / "o", ["--output", str(out), "--action", action], monkeypatch)
+    recs = _parse(out)
+    ids = [h.split()[0] for h, _, _ in recs]
+    for h, s, q in recs:
+        assert len(s) == len(q)
+        assert h.endswith(("fb:i:0", "fb:i:1"))
+    flagged = {"r1", "r2"}
+    if action == "tag":
+        assert ids == ["r1", "r2", "r3"]
+        assert recs[0][0] == "r1 runid=abc fb:i:1" and recs[2][0] == "r3 fb:i:0"
+    elif action == "filter":
+        assert ids == ["r3"]
+    elif action == "clip":
+        assert ids == ["r1", "r2", "r3"]
+        assert len(recs[0][1]) == 1000  # tie keeps first half
+        assert len(recs[1][1]) == 1500  # p=1500 -> keep [:p]
+        assert len(recs[2][1]) == 2000
+    else:
+        assert ids == ["r1_1", "r1_2", "r2_1", "r2_2", "r3"]
+        assert recs[0][1] + recs[1][1] == _reads()[0][1]
+        assert recs[2][2] + recs[3][2] != ""
+        assert len(set(ids)) == len(ids)
+    summ = json.load(open(tmp_path / "o" / "summary_foldback_hunter_in.json"))
+    assert summ["action"] == action
+    assert summ["clipped_reads"] == (2 if action == "clip" else 0)
+    assert summ["filtered_reads"] == (2 if action == "filter" else 0)
+    assert summ["split_reads"] == (2 if action == "split" else 0)
+
+
+def test_output_deterministic_across_backends(tmp_path, monkeypatch):
+    fq = _make_fq(tmp_path / "in.fastq", _reads())
+    outs = []
+    for i, extra in enumerate([[], ["--processes", "2"], ["--threads", "2"]]):
+        out = tmp_path / f"o{i}.fastq"
+        _run(fq, tmp_path / f"d{i}", ["--output", str(out), "--action", "split"] + extra, monkeypatch)
+        outs.append(out.read_text())
+    assert outs[0] == outs[1] == outs[2]
+
+
+def test_tag_roundtrip(tmp_path, monkeypatch):
+    fq = _make_fq(tmp_path / "in.fastq", _reads())
+    out = tmp_path / "tagged.fastq"
+    _run(fq, tmp_path / "a", ["--output", str(out), "--action", "tag"], monkeypatch)
+    _run(out, tmp_path / "b", [], monkeypatch)
+    assert _read_tsvs(tmp_path / "a", "in")[0] == _read_tsvs(tmp_path / "b", "tagged")[0].replace("tagged", "in")
+
+
+def test_no_output_keeps_summary_keys(tmp_path, monkeypatch):
+    fq = _make_fq(tmp_path / "in.fastq", _reads())
+    _run(fq, tmp_path / "o", [], monkeypatch)
+    summ = json.load(open(tmp_path / "o" / "summary_foldback_hunter_in.json"))
+    assert "action" not in summ and "split_reads" not in summ
+    assert summ["clipped_reads"] == 0 and summ["filtered_reads"] == 0
+
+
+@pytest.mark.parametrize("extra", [
+    ["--action", "clip"],
+    ["--output", "X.fastq.gz", "--output-format", "fastq"],
+    ["--output", "X.fastq", "--output-format", "fastq.gz"],
+    ["--output", "X.fastq", "--output-format", "bam"],
+    ["--output", "IN"],
+])
+def test_validation_errors(tmp_path, monkeypatch, extra):
+    fq = _make_fq(tmp_path / "in.fastq", _reads())
+    extra = [str(tmp_path / e) if e.startswith("X.") else (str(fq) if e == "IN" else e) for e in extra]
+    with pytest.raises(SystemExit):
+        _run(fq, tmp_path / "o", extra, monkeypatch)
+
+
+def test_noisy_mode_warning(tmp_path, monkeypatch, capsys):
+    fq = _make_fq(tmp_path / "in.fastq", _reads())
+    _run(fq, tmp_path / "o", ["--output", str(tmp_path / "x.fastq"), "--action", "clip"],
+         monkeypatch, mode="seed")
+    assert "unvalidated" in capsys.readouterr().err
