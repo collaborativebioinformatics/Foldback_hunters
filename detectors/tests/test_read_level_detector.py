@@ -117,7 +117,7 @@ def test_summary_json_written(tmp_path, monkeypatch):
     assert summary["filtered_reads"] == 0
     assert summary["foldback_rate"] == round(flagged_count / 3, 4)
     assert summary["mode"] == "probe"
-    assert summary["threshold"] == 0.8
+    assert summary["threshold"] == 0.99
     assert summary["processes"] is None
     assert summary["threads"] is None
     assert isinstance(summary["runtime_sec"], (int, float))

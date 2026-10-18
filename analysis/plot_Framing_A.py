@@ -13,7 +13,7 @@ FRACTIONS=[1,5,10]
 def load_calls(method,condition):
     if method=="read_level_detector_probe":
         df=pd.read_csv(f"{PROBE_DIR}/calls_read_level_detector_{condition}.tsv",sep="\t")
-        df["flagged"]=pd.to_numeric(df["flagged"])>0.8
+        df["flagged"]=pd.to_numeric(df["flagged"])>0.99
     else:
         path=glob.glob(f"{RESULTS_DIR}/**/calls_{method}_{condition}.tsv",recursive=True)[0]
         df=pd.read_csv(path,sep="\t")

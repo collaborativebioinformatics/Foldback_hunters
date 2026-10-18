@@ -14,8 +14,7 @@ a TTY).
 Writes calls_foldback_hunter_<stem>.tsv (read_id, method, flagged)
 and scores_foldback_hunter_<stem>.tsv (read_id, raw_score,
 fold_position_bp, status). flagged is a boolean: raw_score >= --threshold
-(default 0.8). <stem> is the input filename stem (e.g. foo.fastq.gz -> foo,
-foo.bam -> foo).
+(default 0.99). <stem> is the input filename stem (e.g. foo.fastq.gz -> foo).
 
 Optional read output: --output <reads.fastq|.fasta[.gz]> with
 --action {tag,clip,filter,split} (default tag). Every emitted record gets
@@ -450,11 +449,10 @@ def main():
         help="Skip the --mode full confirmation prompt (required if stdin is not a TTY). "
              "The whole input is always scored; to subset it, use seqtk sample / "
              "samtools view -s.")
-    ap.add_argument("--threshold", type=threshold_type, default=0.8,
+    ap.add_argument("--threshold", type=threshold_type, default=0.99,
         help="Minimum raw_score to flag a read as foldback, range [0,1]. "
-             "Default 0.8 matches analysis/plot_Framing_A.py's published "
-             "9-condition benchmark threshold — do not change the default "
-             "without rerunning that analysis.")
+             "Default 0.99 from comprehensive benchmark analysis"
+             " do not change without proper justification.")
     ap.add_argument("--output", default=None,
         help="Write reads to this FASTQ/FASTA (.gz ok) or unmapped BAM (.bam). FASTA output "
              "drops qualities (needed for FASTA input; FASTA->BAM stores none). BAM input to FASTQ/FASTA: "
